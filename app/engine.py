@@ -259,6 +259,7 @@ def transcribe(x, spoken, progress, stop):
     model = WhisperModel(path, device="cpu", compute_type="int8", cpu_threads=threads(), local_files_only=True)
     dur = len(x) / RATE
     lines = []
+    said = time.time()
     try:
         for s0, s1 in pieces(x):
             log("typing %.0f-%.0f s of %.0f" % (s0 / RATE, s1 / RATE, dur))
@@ -271,6 +272,9 @@ def transcribe(x, spoken, progress, stop):
                 if t:
                     lines.append(t)
                 progress(min(0.999, (s0 / RATE + s.end) / max(dur, 1)), lines[-6:])
+                if time.time() - said > 60:
+                    said = time.time()
+                    log("typed up to %.0f s of %.0f" % (s0 / RATE + s.end, dur))
             del a
     finally:
         del model

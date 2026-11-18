@@ -436,12 +436,20 @@ class Window(QMainWindow):
         foot.setStyleSheet("color: #5b6470; font-size: 10pt;")
         lay.addWidget(foot)
 
-        scroll = QScrollArea()
+        self.scroll = scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setWidget(body)
         self.setCentralWidget(scroll)
         self.resize(1000, 860)
+
+    def fit_screen(self):
+        """Show the window whole on a small laptop screen: there it opens filling the screen."""
+        scr = self.screen().availableGeometry() if self.screen() else None
+        if scr is not None and (scr.height() < 900 or scr.width() < 1040):
+            self.showMaximized()
+        else:
+            self.show()
 
     # -- file
     def pick(self):
@@ -499,6 +507,12 @@ class Window(QMainWindow):
             self.tabs.addTab(tab, "%s  %s" % (NAME_YI[t], NAME_EN[t]) if t != "en" else "English")
         self.tabs.hide()
         self.partial.clear(); self.partial.show()
+        rtl = spoken in RTL
+        self.partial.setLayoutDirection(Qt.RightToLeft if rtl else Qt.LeftToRight)
+        opt = QTextOption(Qt.AlignRight if rtl else Qt.AlignLeft)
+        opt.setTextDirection(Qt.RightToLeft if rtl else Qt.LeftToRight)
+        opt.setWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
+        self.partial.document().setDefaultTextOption(opt)
         self.bar.setValue(0); self.bar.show()
         self.start_btn.hide(); self.stop_btn.show()
         for w in (self.choose, *self.spoken_btn.values(), *self.target_box.values()):
@@ -544,6 +558,7 @@ class Window(QMainWindow):
         if self.tabs.count() and any(t.edit.toPlainText() for t in self.tabs_by_lang.values()):
             self.tabs.show()
             self.tabs.setCurrentIndex(0)
+            QTimer.singleShot(100, lambda: self.scroll.ensureWidgetVisible(self.tabs, 0, 0))
         self.last_ok = ok
 
     def stop(self):
@@ -650,7 +665,7 @@ def main():
         app.setWindowIcon(QIcon(ico))
     log("start %s, %s threads, app dir %s" % (VERSION, engine.threads(), engine.app_dir()))
     win = Window()
-    win.show()
+    win.fit_screen()
     if a.selftest:
         selftest(app, win, a)
     else:

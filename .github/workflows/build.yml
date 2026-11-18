@@ -84,10 +84,15 @@ jobs:
           gh release view ${{ inputs.release }} 2>$null
           if ($?) { gh release upload ${{ inputs.release }} Output\HafutzaTyping-Setup.exe --clobber }
           else { gh release create ${{ inputs.release }} Output\HafutzaTyping-Setup.exe --title "Hafutza Typing ${{ inputs.release }} for Windows" --notes-file installer\release-notes.md }
+      - name: test 5 - same 60 s video the website typed (Nov 17) - how close is the text
+        continue-on-error: true
+        run: |
+          python tools/run_selftest.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" tests\clip60.mp4 yi yi C:\st\t5 --timeout 20
+          python tools/compare.py tests\site-clip60-yi.txt C:\st\t5\text-yi.txt
       - name: test 4 - speed, 13.8 minutes of Yiddish to Yiddish + English
         continue-on-error: true
         run: |
-          python tools/run_selftest.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" tests\long.mp3 yi yi,en C:\st\t4 --timeout 60
+          python tools/run_selftest.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" tests\long.mp3 yi yi,en C:\st\t4 --timeout 60 --quiet 15
       - name: keep screenshots and reports
         if: always()
         uses: actions/upload-artifact@v4
