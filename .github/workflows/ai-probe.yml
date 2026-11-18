@@ -1,0 +1,52 @@
+name: ai-probe
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: qwen35-4b
+            url: https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf
+          - name: gemma4-e4b
+            url: https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf
+          - name: qwen35-9b
+            url: https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf
+          - name: gemma4-12b
+            url: https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/main/gemma-4-12b-it-Q4_K_M.gguf
+          - name: aya-expanse-8b
+            url: https://huggingface.co/bartowski/aya-expanse-8b-GGUF/resolve/main/aya-expanse-8b-Q4_K_M.gguf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install faster-whisper psutil
+      - name: get llama.cpp and the model
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force d:\p | Out-Null
+          curl.exe -sSL -o d:\p\llama.zip https://github.com/ggml-org/llama.cpp/releases/download/b12503/llama-b12503-bin-win-cpu-x64.zip
+          Expand-Archive d:\p\llama.zip d:\p\llama
+          curl.exe -sSL -o d:\p\model.gguf "${{ matrix.url }}"
+          gh release download models-v1 -p small-files.zip -p yi-model.bin -D d:\p\dl
+          Expand-Archive d:\p\dl\small-files.zip d:\p\m
+          Move-Item d:\p\dl\yi-model.bin d:\p\m\yi\model.bin
+          Get-ChildItem d:\p\m\yi, d:\p\model.gguf | Format-Table Name, Length
+          Get-ChildItem -Recurse d:\p\llama -Filter llama-server.exe | Select-Object -First 1 FullName
+      - name: probe
+        shell: pwsh
+        run: |
+          $srv = (Get-ChildItem -Recurse d:\p\llama -Filter llama-server.exe | Select-Object -First 1).FullName
+          python tools/ai_probe.py $srv d:\p\model.gguf d:\p\${{ matrix.name }}.json d:\p\m\yi tests/clip60.mp4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-${{ matrix.name }}
+          path: d:\p\*.json*
