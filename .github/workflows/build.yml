@@ -127,10 +127,11 @@ jobs:
             $t = Get-Date
             $b = Start-Process -FilePath cmd.exe -ArgumentList '/c', "`"$line`"" -PassThru
             if ($b.WaitForExit(40000)) { "second start handed its file over and ended after $([int]((Get-Date) - $t).TotalSeconds) s" }
-            else { "second start did NOT end (opened its own window?)"; Stop-Process -Id $b.Id -Force }
+            else { "second start did NOT end (opened its own window?)"; taskkill /PID $b.Id /T /F }
           }
           $a.WaitForExit(120000) | Out-Null
           Get-Content C:\st\t7\report.json
+          Get-Content "$env:LOCALAPPDATA\HafutzaTyping\log.txt" | Select-Object -Last 15
           python -c "import json; r=json.load(open(r'C:\st\t7\report.json',encoding='utf-8')); exit(0 if len(r['files'])==2 else 1)"
       - name: test 8 - video links (YouTube, Facebook, a wrong link) from this machine
         continue-on-error: true

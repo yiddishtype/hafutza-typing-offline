@@ -1416,7 +1416,7 @@ def main():
     if other and files and not test and sys.platform == "win32":
         if send_to_running(files):
             log("files handed to the open window: %s" % files)
-            return 0
+            os._exit(0)          # end at once (a normal Python/Qt shutdown here could hang on Windows)
     f = QFont("Segoe UI", 12)
     app.setFont(f)
     app.setStyleSheet(STYLE)
@@ -1450,7 +1450,11 @@ def main():
     else:
         QTimer.singleShot(600, lambda: first_start_offer(win))
         QTimer.singleShot(3000, win.quiet_check)
-    return app.exec()
+    rc = app.exec()
+    log("exit %s" % rc)
+    if sys.platform == "win32":
+        os._exit(rc)             # be really gone: the update installer waits for this program to close
+    return rc
 
 
 if __name__ == "__main__":
