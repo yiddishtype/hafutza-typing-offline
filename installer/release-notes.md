@@ -1,6 +1,10 @@
 **Hafutza Typing for Windows** - types up Yiddish (and Hebrew, English, Spanish, French) videos and recordings on your own computer, with no internet, and translates them to Yiddish, English, Hebrew, Spanish and French.
 
-Download **HafutzaTyping-Setup.exe** below and open it. (Have version 1.1? Just press the program's **Update** button. Have version 1.0? Install this one over it. Your typed texts and the downloaded parts are kept.)
+Download **HafutzaTyping-Setup.exe** below and open it. (Have version 1.1 or 1.2? Just press the program's **Update** button. Have version 1.0? Install this one over it. Your typed texts and the downloaded parts are kept.)
+
+New in 1.3:
+- The **Update** button now opens a window with two parts: **1. Update - what's new** shows what the newest version adds, with one button to update; **2. Request an update**: write what you want changed or added (in Yiddish or English, with the on-screen Yiddish keyboard if you like) and press **Send**. It reaches us, and the program says "Got it, your request was sent."
+- No internet when you press Send? The request is kept on your computer and goes by itself the next time the program is open with the internet on.
 
 New in 1.2:
 - **Watch and fix**: after a video is typed, press **Watch the video with the text on it, and fix the text**. The video plays with the typing and the translation on it, line by line.

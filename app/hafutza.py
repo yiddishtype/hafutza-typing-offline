@@ -48,6 +48,8 @@ try:
     import links
     import learn
     import project
+    import whatsnew
+    import requests_out
     from engine import LANGS, NAME_YI, NAME_EN, log
 except Exception:
     _excepthook(*sys.exc_info())
@@ -345,6 +347,11 @@ class UpdateCheck(QThread):
         except Exception as e:
             log("update check failed %r" % e)
             self.done.emit(None, "%s: %s" % (type(e).__name__, str(e)[:150]))
+            return
+        try:
+            requests_out.flush(VERSION)       # requests written with no internet go now
+        except Exception as e:
+            log("kept requests: %r" % e)
 
 
 class UpdateFetch(QThread):
@@ -370,16 +377,111 @@ class UpdateFetch(QThread):
             self.done.emit("", str(e))
 
 
+class RequestSend(QThread):
+    done = Signal(str, str)
+
+    def __init__(self, text):
+        super().__init__()
+        self.text = text
+
+    def run(self):
+        try:
+            self.done.emit(*requests_out.send(self.text, VERSION))
+        except Exception as e:
+            log("request send: %r" % e)
+            self.done.emit("error", str(e)[:150])
+
+
+class RequestPage(QWidget):
+    """Update window, part 2: write what you want changed, press Send; it reaches us (kept and sent later if offline)."""
+
+    def __init__(self, dlg):
+        super().__init__()
+        self.dlg, self.th, self.kb, self.result = dlg, None, None, ""
+        lay = QVBoxLayout(self)
+        t = QLabel(both("Write what you want changed or added in the program (Yiddish or English), then press Send. It reaches us.",
+                        "שרייבט וואס איר ווילט טוישן אדער צולייגן אינעם פראגראם, און דרוקט שיקן"))
+        t.setWordWrap(True)
+        f = t.font(); f.setPointSize(13); t.setFont(f)
+        lay.addWidget(t)
+        self.box = QPlainTextEdit()
+        f = self.box.font(); f.setPointSize(15); self.box.setFont(f)
+        self.box.setMinimumHeight(150)
+        lay.addWidget(self.box)
+        self.kb_btn = QPushButton(both("Show the Yiddish keyboard", "אידישע קלאוויאטור"))
+        self.kb_btn.clicked.connect(self.toggle_kb)
+        lay.addWidget(self.kb_btn)
+        self.kb_spot = QVBoxLayout(); lay.addLayout(self.kb_spot)
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+        f = self.status.font(); f.setPointSize(13); self.status.setFont(f)
+        lay.addWidget(self.status)
+        n = len(requests_out.pending())
+        if n:
+            self.status.setText(both("%d request(s) written earlier are waiting for the internet; they go by themselves." % n,
+                                     "פריערדיגע בקשות ווארטן אויף אינטערנעט"))
+        row = QHBoxLayout()
+        self.send_btn = QPushButton(both("Send", "שיקן")); self.send_btn.setObjectName("start")
+        self.close_btn = QPushButton(both("Close", "צומאכן"))
+        row.addWidget(self.send_btn, 2); row.addWidget(self.close_btn, 1)
+        lay.addLayout(row)
+        self.send_btn.clicked.connect(self.send)
+        self.close_btn.clicked.connect(dlg.cancel)
+
+    def toggle_kb(self):
+        if self.kb is None:
+            import player
+            self.kb = player.Keyboard()
+            self.kb.typed.connect(lambda c: (self.box.insertPlainText(c), self.box.setFocus()))
+            self.kb.back.connect(lambda: self.box.textCursor().deletePreviousChar())
+            self.kb_spot.addWidget(self.kb)
+            self.kb_btn.setText(both("Hide the keyboard", "באהאלטן די קלאוויאטור"))
+            return
+        show = not self.kb.isVisible()
+        self.kb.setVisible(show)
+        self.kb_btn.setText(both("Hide the keyboard", "באהאלטן די קלאוויאטור") if show
+                            else both("Show the Yiddish keyboard", "אידישע קלאוויאטור"))
+
+    def send(self):
+        text = self.box.toPlainText().strip()
+        if not text:
+            self.status.setText(both("Please write what you want first.", "ביטע שרייבט קודם וואס איר ווילט"))
+            return
+        self.send_btn.setEnabled(False)
+        self.status.setText(both("Sending ...", "מען שיקט ..."))
+        self.th = RequestSend(text)
+        self.th.done.connect(self.sent)
+        self.th.start()
+
+    def sent(self, kind, info):
+        self.th.wait(); self.th = None
+        self.send_btn.setEnabled(True)
+        self.result = kind
+        self.box.clear()
+        if kind == "sent":
+            self.status.setText(both("✓ Got it, your request was sent.", "✓ באקומען, אייער בקשה איז געשיקט געווארן"))
+        else:
+            self.status.setText(both("No internet right now, so your request is kept on this computer. "
+                                     "It goes by itself the next time the program is open with the internet on.",
+                                     "קיין אינטערנעט יעצט: די בקשה ווערט אפגעהיטן און גייט אוועק ווען די אינטערנעט איז אן"))
+
+
 class UpdateDialog(QDialog):
-    """Update button: check -> "You have the newest version" or download + install + open again."""
+    """Update button: two parts. 1) Update: what is new + update with one press (or "You have the newest version").
+    2) Request an update: write what you want changed and send it."""
 
     def __init__(self, parent, url=None, auto=False, known=None):
         super().__init__(parent)
         self.url, self.auto, self.m, self.th = url, auto, None, None
         self.result_text = ""
         self.setWindowTitle(TITLE + " - Update")
-        self.setMinimumWidth(620)
-        lay = QVBoxLayout(self)
+        self.setMinimumWidth(760)
+        outer = QVBoxLayout(self)
+        self.tabs = QTabWidget()
+        f = self.tabs.font(); f.setPointSize(13); self.tabs.setFont(f)
+        outer.addWidget(self.tabs)
+        page = QWidget()
+        lay = QVBoxLayout(page)
         self.msg = QLabel(both("Checking for a new version ...", "מען קוקט צי ס'איז דא א נייע ווערסיע"))
         self.msg.setWordWrap(True)
         f = self.msg.font(); f.setPointSize(13); self.msg.setFont(f)
@@ -390,7 +492,11 @@ class UpdateDialog(QDialog):
         self.go = QPushButton(both("Update now", "דערהיינטיקן יעצט")); self.go.setObjectName("start"); self.go.hide()
         self.close_btn = QPushButton(both("Close", "צומאכן"))
         row.addWidget(self.go, 2); row.addWidget(self.close_btn, 1)
+        lay.addStretch(1)
         lay.addLayout(row)
+        self.req = RequestPage(self)
+        self.tabs.addTab(page, "1. Update - what's new  -  דערהיינטיקן")
+        self.tabs.addTab(self.req, "2. Request an update  -  בעטן א טויש")
         self.go.clicked.connect(self.fetch)
         self.close_btn.clicked.connect(self.cancel)
         if known:
@@ -413,13 +519,16 @@ class UpdateDialog(QDialog):
         elif not m["newer"]:
             self.result_text = "newest"
             self.bar.hide()
+            added = whatsnew.text(VERSION)
             self.msg.setText(both("You have the newest version (%s)." % VERSION,
-                                  "איר האט די נייסטע ווערסיע (%s)" % VERSION))
+                                  "איר האט די נייסטע ווערסיע (%s)" % VERSION)
+                             + (("\n\nWhat version %s added:\n" % VERSION) + added if added else ""))
             self.done_auto(0)
         else:
             self.m = m
             self.bar.hide()
-            notes = ("\n" + m["notes"]) if m.get("notes") else ""
+            notes = m.get("notes") or whatsnew.text(m["version"])
+            notes = ("\n\nWhat's new in %s:\n%s\n" % (m["version"], notes)) if notes else ""
             self.msg.setText(both("A new version is ready: %s (you have %s). Download %.0f MB and install it?%s\n"
                                   "Your typed texts and the downloaded parts are kept. The program closes and opens again by itself."
                                   % (m["version"], VERSION, m["size"] / 1e6, notes),
@@ -480,6 +589,8 @@ class UpdateDialog(QDialog):
             QTimer.singleShot(1500, lambda: self.on_auto_done(self.result_text, code))
 
     def cancel(self):
+        if getattr(self, "req", None) and self.req.th:
+            return
         if self.th:
             self.th.stop()
             return
@@ -1548,6 +1659,81 @@ def update_test(app, win, a):
     d.show()
 
 
+def request_test(app, win, a):
+    """Build-machine test of Update -> Request an update: 1) no internet: the request is kept;
+    2) internet back: the kept one goes; 3) a new one is sent and "Got it" shows. Exit 0 only if all three held."""
+    out = os.path.abspath(a.out); os.makedirs(out, exist_ok=True)
+    rep = {"version": VERSION}
+    d = UpdateDialog(win, known={"version": VERSION, "newer": False, "url": "", "sha256": "", "size": 0})
+    d.show()
+    rp = d.req
+    tag = a.request_test
+
+    def shot(name):
+        try:
+            d.grab().save(os.path.join(out, name))
+        except Exception as e:
+            log("shot %r" % e)
+
+    def finish(code):
+        rep["pending_end"] = len(requests_out.pending())
+        rep["code"] = code
+        json.dump(rep, open(os.path.join(out, "report.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        log("request test: %s" % rep)
+        app.exit(code)
+
+    def wait_send(then):
+        t = QTimer(d)
+        def chk():
+            if rp.th is None and rp.result:
+                t.stop(); then()
+        t.timeout.connect(chk); t.start(300)
+
+    def step1():
+        shot("update-tab.png")
+        d.tabs.setCurrentIndex(1)
+        rp.kb_btn.click()
+        letters = [k for k in rp.kb.keys if len(k) == 1 and k != " "][:3]
+        for k in letters:
+            rp.kb.keys[k].click()
+        rp.kb.keys["back"].click()
+        rep["keyboard_typed"] = rp.box.toPlainText()
+        rep["keyboard_ok"] = rp.box.toPlainText() == "".join(letters[:2])
+        rp.box.insertPlainText(" CI TEST 1 (no internet) %s" % tag)
+        os.environ["HAFUTZA_REQUEST_URL"] = "http://127.0.0.1:9/nothing"
+        rp.result = ""
+        rp.send_btn.click()
+        wait_send(step2)
+
+    def step2():
+        rep["first"] = rp.result
+        rep["pending_after_first"] = len(requests_out.pending())
+        rep["first_status"] = rp.status.text()
+        shot("request-kept.png")
+        os.environ.pop("HAFUTZA_REQUEST_URL", None)
+        try:
+            rep["flushed"] = requests_out.flush(VERSION)
+        except Exception as e:
+            rep["flushed"] = "error %r" % e
+        rep["pending_after_flush"] = len(requests_out.pending())
+        rp.box.setPlainText("CI TEST 2 (internet on) %s" % tag)
+        rp.result = ""
+        rp.send_btn.click()
+        wait_send(step3)
+
+    def step3():
+        rep["second"] = rp.result
+        rep["second_status"] = rp.status.text()
+        shot("request-sent.png")
+        ok = (rep["first"] == "kept" and rep["pending_after_first"] == 1 and rep["flushed"] == 1
+              and rep["pending_after_flush"] == 0 and rep["second"] == "sent" and "Got it" in rep["second_status"]
+              and rep["keyboard_ok"])
+        finish(0 if ok else 1)
+
+    QTimer.singleShot(1500, step1)
+    QTimer.singleShot(120000, lambda: finish(2))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("files", nargs="*")
@@ -1555,10 +1741,10 @@ def main():
     ap.add_argument("--out", default="selftest"); ap.add_argument("--download", action="store_true")
     ap.add_argument("--more", action="append", default=[]); ap.add_argument("--drop", action="store_true")
     ap.add_argument("--update-test"); ap.add_argument("--click-test"); ap.add_argument("--link-test"); ap.add_argument("--report-after", type=float)
-    ap.add_argument("--player-test")
+    ap.add_argument("--player-test"); ap.add_argument("--request-test")
     a, _ = ap.parse_known_args()
     files = [f for f in a.files if os.path.isfile(f)]
-    test = bool(a.selftest or a.update_test is not None or a.click_test or a.link_test or a.player_test)
+    test = bool(a.selftest or a.update_test is not None or a.click_test or a.link_test or a.player_test or a.request_test)
     other = updater.hold_mutex()
     app = QApplication(sys.argv)
     app.setApplicationName(TITLE)
@@ -1587,6 +1773,8 @@ def main():
         click_test(app, win, a)
     elif a.link_test:
         link_test(app, win, a)
+    elif a.request_test:
+        request_test(app, win, a)
     elif a.player_test:
         import player
         player.player_test(app, win, a.player_test, os.path.abspath(a.out))

@@ -7,7 +7,7 @@ on:
         default: ""
       version:
         description: "Program version"
-        default: "1.2"
+        default: "1.3"
       replace_v10:
         description: "Also put the new full installer at the v1.0 link the owner has (yes/no)"
         default: "yes"
@@ -60,21 +60,21 @@ jobs:
           Set-Content -NoNewline -Encoding ascii dist\HafutzaTyping\version.txt "${{ inputs.version }}"
           "video player parts:"; Get-ChildItem -Recurse dist\HafutzaTyping -Include *multimedia*,av*.dll,swscale*.dll,swresample*.dll,*ffmpeg* | Format-Table Length,FullName
           "{0:N0} MB" -f ((Get-ChildItem -Recurse dist\HafutzaTyping | Measure-Object Length -Sum).Sum / 1MB)
-      - name: installers (full + update-only) and a test "1.2" update
+      - name: installers (full + update-only) and a test "VERSION.9" update (newer than this build)
         run: |
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           & $iscc /Q "/DMyAppVersion=${{ inputs.version }}" installer\hafutza.iss; if ($LASTEXITCODE) { exit 1 }
           & $iscc /Q "/DMyAppVersion=${{ inputs.version }}" /DAppOnly installer\hafutza.iss; if ($LASTEXITCODE) { exit 1 }
-          Set-Content -NoNewline -Encoding ascii dist\HafutzaTyping\version.txt "1.2"
-          & $iscc /Q "/DMyAppVersion=1.2" /DAppOnly /DOutName=HafutzaTyping-Update-test12 installer\hafutza.iss; if ($LASTEXITCODE) { exit 1 }
+          Set-Content -NoNewline -Encoding ascii dist\HafutzaTyping\version.txt "${{ inputs.version }}.9"
+          & $iscc /Q "/DMyAppVersion=${{ inputs.version }}.9" /DAppOnly /DOutName=HafutzaTyping-Update-test12 installer\hafutza.iss; if ($LASTEXITCODE) { exit 1 }
           Set-Content -NoNewline -Encoding ascii dist\HafutzaTyping\version.txt "${{ inputs.version }}"
           Get-ChildItem Output | Format-Table Length,Name
           New-Item -ItemType Directory -Force C:\upd | Out-Null
           Copy-Item Output\HafutzaTyping-Update-test12.exe C:\upd\
-          python tools/make_manifest.py Output\HafutzaTyping-Update-test12.exe 1.2 http://127.0.0.1:8000/HafutzaTyping-Update-test12.exe C:\upd\new.json "Test update"
+          python tools/make_manifest.py Output\HafutzaTyping-Update-test12.exe ${{ inputs.version }}.9 http://127.0.0.1:8000/HafutzaTyping-Update-test12.exe C:\upd\new.json "Test update"
           python tools/make_manifest.py Output\HafutzaTyping-Update-test12.exe ${{ inputs.version }} http://127.0.0.1:8000/HafutzaTyping-Update-test12.exe C:\upd\same.json
-          python -c "import json; m=json.load(open(r'C:\upd\new.json')); m['version']='1.3'; m['sha256']='0'*64; json.dump(m, open(r'C:\upd\bad.json','w'))"
-          python tools/make_manifest.py Output\HafutzaTyping-Update.exe ${{ inputs.version }} "https://github.com/${{ github.repository }}/releases/download/${{ inputs.release || 'test' }}/HafutzaTyping-Update.exe" Output\update.json "Watch a typed video with the text on it, pause and skip 5/10/15 seconds, fix a line with a Yiddish keyboard, and the program learns your fixes for the next videos."
+          python -c "import json; m=json.load(open(r'C:\upd\new.json')); m['version']='99'; m['sha256']='0'*64; json.dump(m, open(r'C:\upd\bad.json','w'))"
+          python tools/make_manifest.py Output\HafutzaTyping-Update.exe ${{ inputs.version }} "https://github.com/${{ github.repository }}/releases/download/${{ inputs.release || 'test' }}/HafutzaTyping-Update.exe" Output\update.json
       - name: like the owner's PC - install the published v1.0 and let it download the parts (3 GB) and type a clip
         run: |
           gh release download v1.0 -p HafutzaTyping-Setup.exe -D C:\v10
@@ -131,6 +131,12 @@ jobs:
           if (Test-Path C:\st\t9\text-yi.txt) { python tools/compare.py C:\st\t9\text-yi.txt C:\st\t10\text-yi.txt }
           Get-Content "$env:LOCALAPPDATA\HafutzaTyping\learned.json"
           if ($lt) { "LEARNED WORD TEST FAILED"; exit 1 }
+      - name: test 11 - Update window, Request an update - kept with no internet, sent when it is back, "Got it" shows (reaches the website's request list as a test)
+        run: |
+          $env:HAFUTZA_REQUEST_TEST = "1"
+          $p = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" -ArgumentList '--request-test', "run-${{ github.run_id }}", '--out', 'C:\st\t11' -PassThru -Wait
+          Get-Content C:\st\t11\report.json
+          if ($p.ExitCode -ne 0) { "REQUEST TEST FAILED"; exit 1 }
       - name: test 6 - a double click on the drop box opens the file browser once
         run: |
           $p = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" -ArgumentList '--click-test', "$pwd\tests\clip30.mp4", '--out', 'C:\st\t6' -PassThru -Wait
@@ -163,8 +169,8 @@ jobs:
         run: python tools/update_e2e.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" http://127.0.0.1:8000/same.json newest C:\st\uA --serve C:\upd
       - name: update test B - a damaged download is refused and nothing changes
         run: python tools/update_e2e.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" http://127.0.0.1:8000/bad.json error C:\st\uB --serve C:\upd
-      - name: update test C - Update button finds a test 1.2, downloads, installs, opens again, keeps parts and texts
-        run: python tools/update_e2e.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" http://127.0.0.1:8000/new.json 1.2 C:\st\uC --serve C:\upd
+      - name: update test C - Update button finds a test VERSION.9, downloads, installs, opens again, keeps parts and texts
+        run: python tools/update_e2e.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" http://127.0.0.1:8000/new.json ${{ inputs.version }}.9 C:\st\uC --serve C:\upd
       - name: publish
         if: ${{ inputs.release != '' }}
         run: |
