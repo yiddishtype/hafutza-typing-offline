@@ -86,6 +86,13 @@ def _plan(info):
         vids.sort(key=lambda f: (hgt(f), f.get("tbr") or 0))
         snds.sort(key=lambda f: f.get("abr") or f.get("tbr") or 0)
         return ("join", vids[-1]["format_id"], snds[-1]["format_id"])
+    # Facebook and some others: the ready files ("sd", "hd") don't say their codecs or size, beside picture-only
+    # parts in a codec we can't join. Those ready files hold picture and sound: take the best one (hd before sd).
+    unk = [f for f in fs if plain(f) and f.get("vcodec") is None and f.get("acodec") is None
+           and f.get("ext") == "mp4" and hgt(f) <= MAX_H]
+    if unk:
+        unk.sort(key=lambda f: (hgt(f), str(f.get("format_id")) == "hd", f.get("tbr") or 0))
+        return ("both", unk[-1]["format_id"])
     return ("sound", None)
 
 

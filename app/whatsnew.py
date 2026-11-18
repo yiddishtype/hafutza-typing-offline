@@ -1,6 +1,9 @@
 """What each version added, in plain words (shown by the Update button, and written into update.json)."""
 
 NOTES = {
+    "1.3.1": [
+        "Facebook video links now come with the picture, not only the sound.",
+    ],
     "1.3": [
         "The Update button now has two parts: 1) Update - see what is new and update with one press; "
         "2) Request an update - write what you want changed or added, press Send, and it reaches us.",
