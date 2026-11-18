@@ -585,7 +585,7 @@ class LearnedDialog(QDialog):
         self.setWindowTitle("Learned words  -  געלערנטע ווערטער")
         lay = QVBoxLayout(self)
         info = QLabel("These are the words you fixed. On every new video, the typing and the translations are "
-                      "corrected with this list by themselves, and the fixed words are given to the typing as a hint. "
+                      "corrected with this list by themselves. "
                       "Delete a line if a fix should not be done any more.")
         info.setWordWrap(True)
         lay.addWidget(info)

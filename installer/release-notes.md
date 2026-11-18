@@ -6,7 +6,7 @@ New in 1.2:
 - **Watch and fix**: after a video is typed, press **Watch the video with the text on it, and fix the text**. The video plays with the typing and the translation on it, line by line.
 - **Play / Pause** (or the space bar), and buttons to go **back or forward 5, 10 or 15 seconds**. Click any line in the list to jump there.
 - Fix a line: erase it, type it again, or use the on-screen **Yiddish keyboard**. Press **Save the fix** (or Enter): the .txt and .srt files are written again with the fix.
-- **The program learns your fixes**: a word you fix is remembered and fixed by itself in the next videos (in the typing and in the translations), and is given to the speech part as a hint word. See or delete what it learned under **Learned words**. (The big speech and translation models are not retrained; it is your own word list.)
+- **The program learns your fixes**: a word you fix is remembered and fixed by itself in the next videos (in the typing and in the translations). See or delete what it learned under **Learned words**. (The big speech and translation models are not retrained; it is your own word list.)
 - **My typed videos**: open any video typed with 1.2 again to watch and fix. (Videos typed before 1.2 have no line timings: type them again to watch them.)
 - **Video links now come with the picture** (up to 720p), so a pasted link plays in the player like a dropped file. If a site gives only the sound, the text shows on a dark screen.
 - Each typed text is also saved as subtitles (.srt) next to the .txt.

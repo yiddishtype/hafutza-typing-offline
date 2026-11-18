@@ -149,12 +149,10 @@ class Job(QThread):
                                       "שריט 2: מען שרייבט אויף"))
                 self.partial.emit("\n".join(lines))
 
+            # His learned words are NOT given to the speech model as hint words: on the build machine that made the
+            # real model write a mix of scripts and made the typing much worse. The learned list fixes the text after.
             hot = None
-            try:
-                hot = learn.hotwords(self.spoken)
-            except Exception as e:
-                log("learned words not read: %r" % e)
-            self.times["hint_words"] = hot or ""
+            self.times["hint_words"] = ""
             segs = []
             text = engine.transcribe(x, self.spoken, prog, stop, hotwords=hot, segments=segs)
             self.times["typing"] = time.time() - t1

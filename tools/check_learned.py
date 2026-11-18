@@ -13,11 +13,11 @@ import re
 marks = "֑-ׇיִ-ﭏ"
 has_old = bool(re.search(r"(?<![\w%s])%s(?![\w%s])" % (marks, re.escape(word), marks), yi))
 checks = {
-    "hint word given to the speech model": new in (t.get("hint_words") or ""),
+    "learned typing fix used by itself": (t.get("learned_fixes_typing") or 0) >= 1,
     "fixed word in the 2nd video's typing": new in yi,
     "wrong word gone from the 2nd video": not has_old,
 }
-soft = {"typing fixes used": t.get("learned_fixes_typing"), "translation fixes used": t.get("learned_fixes_en"),
+soft = {"translation fixes used": t.get("learned_fixes_en"),
         "translation fix word in English": p["fix_tr"]["new_word"] in en}
 print("fixed in video 1:", word, "->", new)
 print("checks", json.dumps(checks, ensure_ascii=False))

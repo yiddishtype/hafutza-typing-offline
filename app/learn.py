@@ -4,7 +4,7 @@ Every time he fixes a line (in the video player), the words he changed are remem
   "speech"  wrong word(s) the typing gave -> the right word(s)      (per spoken language)
   "tr"      wrong word(s) in a translation -> the right word(s)     (per language translated to)
 On the next video, the typing and the translations are corrected with that list by themselves, and the right words
-of the typing list are given to the speech model as hint words. The list can be seen and changed in "Learned words".
+of the typing list are NOT given to the speech model as hint words (tried: it garbled the typing). The list can be seen and changed in "Learned words".
 (The speech and translation models themselves are not retrained: that needs a big graphics card for days.)
 Stored in %LOCALAPPDATA%\\HafutzaTyping\\learned.json.
 """

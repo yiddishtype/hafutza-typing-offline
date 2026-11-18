@@ -122,13 +122,13 @@ jobs:
           $pt = $LASTEXITCODE
           Get-ChildItem "$env:USERPROFILE\Documents\Hafutza Typing" | Format-Table Length,Name
           if ($pt) { "PLAYER TEST FAILED"; exit 1 }
-      - name: test 10 - a 2nd video uses the word fixed in test 9 by itself
+      - name: test 10 - typing the video again uses the word fixed in test 9 by itself
         run: |
-          python tools/run_selftest.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" tests\clip30.mp4 yi yi,en C:\st\t10 --timeout 30
+          python tools/run_selftest.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" tests\clip30-picture.mp4 yi yi,en C:\st\t10 --timeout 30
           if ($LASTEXITCODE) { "typing the 2nd video failed"; exit 1 }
           python tools/check_learned.py C:\st\t9\p C:\st\t10
           $lt = $LASTEXITCODE
-          if (Test-Path C:\st\t3\text-yi.txt) { python tools/compare.py C:\st\t3\text-yi.txt C:\st\t10\text-yi.txt }
+          if (Test-Path C:\st\t9\text-yi.txt) { python tools/compare.py C:\st\t9\text-yi.txt C:\st\t10\text-yi.txt }
           Get-Content "$env:LOCALAPPDATA\HafutzaTyping\learned.json"
           if ($lt) { "LEARNED WORD TEST FAILED"; exit 1 }
       - name: test 6 - a double click on the drop box opens the file browser once
