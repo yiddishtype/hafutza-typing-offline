@@ -120,33 +120,37 @@ for name, mode, text, instr, chk in CASES:
                          "prompt_tok_per_s": round(tim.get("prompt_per_second", 0), 1)})
     print(name, ok, round(sec, 1), "s", flush=True)
 res["memory_gb_peak_rss"] = peak_mem(srv.pid)
+json.dump(res, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 
 # alongside the speech model (as when the program is typing a video)
-if WDIR and CLIP:
-    from faster_whisper import WhisperModel, decode_audio
-    a = decode_audio(CLIP)[:16000 * 60]
+try:
+  if WDIR and CLIP:
+      from faster_whisper import WhisperModel, decode_audio
+      a = decode_audio(CLIP)[:16000 * 60]
 
-    def typing():
-        m = WhisperModel(WDIR, device="cpu", compute_type="int8", cpu_threads=min(8, NCPU), local_files_only=True)
-        t = time.time()
-        segs, _ = m.transcribe(a, language="yi", beam_size=5)
-        list(segs)
-        return time.time() - t
+      def typing():
+          m = WhisperModel(WDIR, device="cpu", compute_type="int8", cpu_threads=min(8, NCPU), local_files_only=True)
+          t = time.time()
+          segs, _ = m.transcribe(a, language="yi", beam_size=5)
+          list(segs)
+          return time.time() - t
 
-    res["typing_60s_alone_seconds"] = round(typing(), 1)
-    box = {}
-    th = threading.Thread(target=lambda: box.update(t=typing()))
-    th.start()
-    time.sleep(20)  # whisper is loaded and typing
-    both = []
-    for name, mode, text, instr, chk in CASES[:3]:
-        out, shown, sec, tim = ask(mode, text, instr)
-        both.append({"name": name, "pass": chk(out), "seconds": round(sec, 1)})
-    th.join()
-    res["typing_60s_with_ai_seconds"] = round(box.get("t", 0), 1)
-    res["ai_while_typing"] = both
-    import psutil
-    res["machine_ram_gb"] = round(psutil.virtual_memory().total / 1e9, 1)
+      res["typing_60s_alone_seconds"] = round(typing(), 1)
+      box = {}
+      th = threading.Thread(target=lambda: box.update(t=typing()))
+      th.start()
+      time.sleep(20)  # whisper is loaded and typing
+      both = []
+      for name, mode, text, instr, chk in CASES[:3]:
+          out, shown, sec, tim = ask(mode, text, instr)
+          both.append({"name": name, "pass": chk(out), "seconds": round(sec, 1)})
+      th.join()
+      res["typing_60s_with_ai_seconds"] = round(box.get("t", 0), 1)
+      res["ai_while_typing"] = both
+      import psutil
+      res["machine_ram_gb"] = round(psutil.virtual_memory().total / 1e9, 1)
+except Exception as e:
+    res["typing_error"] = repr(e)
 srv.kill()
 json.dump(res, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 print(json.dumps(res, ensure_ascii=False, indent=1))
