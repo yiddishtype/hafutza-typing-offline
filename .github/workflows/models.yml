@@ -1,0 +1,26 @@
+name: models
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install numpy
+      - run: df -h .
+      - run: python tools/pack_models.py out
+      - name: release models-v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd out
+          for k in yi he multi nllb; do cp $k/model.bin $k-model.bin; done
+          zip -r small-files.zip yi he multi nllb -x '*/model.bin'
+          gh release create models-v1 --title "Models v1 (downloaded once by the app)" \
+            --notes "Speech models (ivrit-ai Yiddish + Hebrew Whisper turbo, Apache-2.0; Whisper large-v3-turbo, MIT) packed to int8, and NLLB-200 distilled 1.3B int8 (Meta, CC-BY-NC-4.0) for translation." \
+            yi-model.bin he-model.bin multi-model.bin nllb-model.bin small-files.zip models.json
