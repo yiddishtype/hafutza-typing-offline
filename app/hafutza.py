@@ -18,15 +18,34 @@ os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
 import argparse, json, tempfile, shutil, time, traceback
 
-from PySide6.QtCore import Qt, QThread, Signal, QTimer, QStandardPaths, QUrl
-from PySide6.QtGui import QFont, QTextOption, QDesktopServices, QIcon
-from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
-                               QPushButton, QRadioButton, QCheckBox, QButtonGroup, QProgressBar, QTabWidget,
-                               QPlainTextEdit, QFileDialog, QMessageBox, QGroupBox, QScrollArea, QDialog, QSizePolicy,
-                               QFrame)
 
-import engine
-from engine import LANGS, NAME_YI, NAME_EN, log
+def _crash_file():
+    d = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "HafutzaTyping")
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, "crash.txt")
+
+
+def _excepthook(t, v, tb):
+    try:
+        with open(_crash_file(), "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + "".join(traceback.format_exception(t, v, tb)) + "\n")
+    except Exception:
+        pass
+
+
+sys.excepthook = _excepthook
+try:
+    from PySide6.QtCore import Qt, QThread, Signal, QTimer, QStandardPaths
+    from PySide6.QtGui import QFont, QTextOption, QIcon
+    from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout, QLabel,
+                                   QPushButton, QRadioButton, QCheckBox, QButtonGroup, QProgressBar, QTabWidget,
+                                   QPlainTextEdit, QFileDialog, QMessageBox, QGroupBox, QScrollArea, QDialog, QFrame)
+
+    import engine
+    from engine import LANGS, NAME_YI, NAME_EN, log
+except Exception:
+    _excepthook(*sys.exc_info())
+    raise
 
 TITLE = "Hafutza Typing"
 VERSION = "1.0"
@@ -176,7 +195,14 @@ class Fetch(QThread):
             for n, k in enumerate(self.keys, 1):
                 what = "%s (%d of %d, %.1f GB)" % (engine.MODEL_WHAT[k], n, len(self.keys), engine.manifest()[k]["size"] / 1e9)
                 self.progress.emit(what, 0.0)
-                engine.download(k, lambda d, t: self.progress.emit(what, d / t), lambda: self._stop)
+                mark = [0]
+
+                def prog(d, t, what=what, mark=mark):
+                    self.progress.emit(what, d / t)
+                    if d / t >= mark[0] + 0.1:
+                        mark[0] += 0.1
+                        log("download %s %.0f%%" % (k, 100 * d / t))
+                engine.download(k, prog, lambda: self._stop)
                 log("downloaded %s" % k)
             self.done.emit(True, "")
         except engine.Stopped:
@@ -222,10 +248,13 @@ class FetchDialog(QDialog):
         self.go.setEnabled(False)
         self.later.setText(both("Stop", "אפשטעלן"))
         self.th = Fetch(self.keys)
-        self.th.progress.connect(lambda w, f: (self.what.setText("Downloading " + w + "  -  %d%%" % (f * 100)),
-                                               self.bar.setValue(int(f * 1000))))
+        self.th.progress.connect(self.on_progress)   # bound methods (not lambdas): Qt then runs them in the window's thread
         self.th.done.connect(self.finished_)
         self.th.start()
+
+    def on_progress(self, w, f):
+        self.what.setText("Downloading " + w + "  -  %d%%" % (f * 100))
+        self.bar.setValue(int(f * 1000))
 
     def finished_(self, ok, msg):
         self.th.wait()
@@ -328,7 +357,6 @@ class Window(QMainWindow):
         f = t.font(); f.setPointSize(22); f.setBold(True); t.setFont(f)
         head.addWidget(t)
         head.addStretch(1)
-        head.addWidget(RTLLabel("האפצה טייפינג", 22, True))
         lay.addLayout(head)
         sub = QHBoxLayout()
         sub.addWidget(QLabel("Video or recording in, typed text out. No internet needed."))
@@ -477,12 +505,15 @@ class Window(QMainWindow):
             w.setEnabled(False)
         self.job = Job(self.path, spoken, targets)
         self.job.status.connect(self.status.setText)
-        self.job.progress.connect(lambda f: self.bar.setValue(int(f * 1000)))
+        self.job.progress.connect(self.on_progress)
         self.job.partial.connect(self.partial.setPlainText)
         self.job.result.connect(self.got)
         self.job.done.connect(self.finished_)
         self.job.start()
         return True
+
+    def on_progress(self, f):
+        self.bar.setValue(int(f * 1000))
 
     def got(self, lang, text):
         tab = self.tabs_by_lang.get(lang)
@@ -550,6 +581,7 @@ def selftest(app, win, a):
             for c, b in win.target_box.items():
                 b.setChecked(c in rep["targets"])
             rep["missing_before"] = engine.missing()
+            log("selftest: ready, missing %s" % rep["missing_before"])
             shot("1-ready")
             if a.download and engine.missing():
                 d = FetchDialog(win, engine.missing(), auto=True)
@@ -558,16 +590,25 @@ def selftest(app, win, a):
                 d.exec()
                 rep["download_seconds"] = time.time() - t
             rep["missing_after"] = engine.missing()
+            log("selftest: missing after download %s; starting" % rep["missing_after"])
             if not win.start(auto=True):
                 rep["error"] = "did not start"
                 finish(3); return
             QTimer.singleShot(15000, lambda: shot("2-working"))
-            win.job.done.connect(lambda ok, msg: QTimer.singleShot(500, lambda: after(ok, msg)))
+            poll = QTimer(win)        # watch from the window's own thread for the job to end
+
+            def check():
+                if win.job is None:
+                    poll.stop()
+                    after(getattr(win, "last_ok", False), win.status.text())
+            poll.timeout.connect(check)
+            poll.start(1000)
         except Exception:
             rep["error"] = traceback.format_exc()
             finish(4)
 
     def after(ok, msg):
+        log("selftest: finished ok=%s %s" % (ok, msg.splitlines()[0] if msg else ""))
         rep["ok"], rep["message"] = ok, msg
         rep["times"] = getattr(win, "last_times", {})
         rep["texts"] = {}

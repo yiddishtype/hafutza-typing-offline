@@ -261,6 +261,7 @@ def transcribe(x, spoken, progress, stop):
     lines = []
     try:
         for s0, s1 in pieces(x):
+            log("typing %.0f-%.0f s of %.0f" % (s0 / RATE, s1 / RATE, dur))
             a = np.asarray(x[s0:s1], dtype=np.float32) / 32768.0
             segs, info = model.transcribe(a, language=spoken, beam_size=5)
             for s in segs:
@@ -286,6 +287,7 @@ class Translator:
         self.sp = spm.SentencePieceProcessor(model_file=os.path.join(p, "sentencepiece.bpe.model"))
 
     def translate(self, text, src, tgt, progress, stop):
+        log("translating %s -> %s" % (src, tgt))
         lines = text.split("\n")
         idx = [i for i, l in enumerate(lines) if l.strip()]
         out = list(lines)
