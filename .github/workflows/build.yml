@@ -158,6 +158,7 @@ jobs:
           $p = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" -ArgumentList '--link-test', '"https://www.youtube.com/watch?v=jNQXAC9IVRw https://www.facebook.com/cnn/videos/10155529876156509/ https://example.com/nothing-here"', '--out', 'C:\st\t8' -PassThru -Wait
           Get-Content C:\st\t8\report.json
           Get-Content "$env:LOCALAPPDATA\HafutzaTyping\log.txt" | Select-String "link" | Select-Object -Last 12
+          python -c "import json; r=json.load(open(r'C:\st\t8\report.json',encoding='utf-8')); print('PICTURES:', [(f['name'], f.get('picture')) for f in r['files']])"
       - name: update test A - Update button when this is the newest version
         run: python tools/update_e2e.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" http://127.0.0.1:8000/same.json newest C:\st\uA --serve C:\upd
       - name: update test B - a damaged download is refused and nothing changes

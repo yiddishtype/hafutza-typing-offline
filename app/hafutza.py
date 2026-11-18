@@ -497,7 +497,7 @@ class UpdateDialog(QDialog):
 
 # ------------------------------------------------------------------ video links
 class LinkFetch(QThread):
-    """Download the sound of one or more video links, one after another."""
+    """Download one or more video links (with their picture where the site has one), one after another."""
     progress = Signal(str, float)
     got = Signal(str)
     failed = Signal(str, str)
@@ -1514,7 +1514,15 @@ def link_test(app, win, a):
                         secs = len(x) / engine.RATE
                     except Exception as e:
                         secs = "unreadable: %r" % e
-                    rep["files"].append({"name": os.path.basename(f), "bytes": os.path.getsize(f), "sound_seconds": secs})
+                    try:
+                        import av
+                        with av.open(f) as c:
+                            vs = [v for v in c.streams.video]
+                            pic = "%dx%d" % (vs[0].codec_context.width, vs[0].codec_context.height) if vs else "none"
+                    except Exception as e:
+                        pic = "unreadable: %r" % e
+                    rep["files"].append({"name": os.path.basename(f), "bytes": os.path.getsize(f), "sound_seconds": secs,
+                                         "picture": pic})
                 json.dump(rep, open(os.path.join(out, "report.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
                 log("link test: %s" % rep)
                 app.exit(0)

@@ -7,13 +7,14 @@ New in 1.2:
 - **Play / Pause** (or the space bar), and buttons to go **back or forward 5, 10 or 15 seconds**. Click any line in the list to jump there.
 - Fix a line: erase it, type it again, or use the on-screen **Yiddish keyboard**. Press **Save the fix** (or Enter): the .txt and .srt files are written again with the fix.
 - **The program learns your fixes**: a word you fix is remembered and fixed by itself in the next videos (in the typing and in the translations), and is given to the speech part as a hint word. See or delete what it learned under **Learned words**. (The big speech and translation models are not retrained; it is your own word list.)
-- **My typed videos**: open any video typed with 1.2 again to watch and fix. (Videos typed before 1.2 have no line timings: type them again to watch them. Video links are fetched as sound only, so they show the text on a dark screen.)
+- **My typed videos**: open any video typed with 1.2 again to watch and fix. (Videos typed before 1.2 have no line timings: type them again to watch them.)
+- **Video links now come with the picture** (up to 720p), so a pasted link plays in the player like a dropped file. If a site gives only the sound, the text shows on a dark screen.
 - Each typed text is also saved as subtitles (.srt) next to the .txt.
 
 New in 1.1:
 - **Update** button (top right): checks for a new version and installs it with one click (downloads only the program, not the big speech parts). It also quietly checks when the program opens.
 - Big **drop box**: drop one or more video/audio files on it (or click it to choose them); several files are typed one after another.
-- **Paste a video link** (YouTube, Facebook, other sites, or a link to an .mp4/.mp3): the program gets the sound of the video (this step needs the internet), then types it as usual. Private or sign-in-only videos can't be fetched: save them and drop the file in.
+- **Paste a video link** (YouTube, Facebook, other sites, or a link to an .mp4/.mp3): the program gets the video (this step needs the internet), then types it as usual. Private or sign-in-only videos can't be fetched: save them and drop the file in.
 - Right-click a video or sound file in Windows: **Open with > Hafutza Typing**.
 
 - If Windows says "Windows protected your PC": click **More info**, then **Run anyway**. (The program is new and not signed by a paid certificate, so Windows does not know it yet.)
