@@ -10,6 +10,11 @@ os.makedirs(out, exist_ok=True)
 args = [exe, "--selftest", f, "--spoken", spoken, "--targets", targets, "--out", out]
 if "--download" in rest:
     args.append("--download")
+if "--drop" in rest:
+    args.append("--drop")
+for i, k in enumerate(rest):
+    if k == "--more":
+        args += ["--more", rest[i + 1]]
 log = os.path.join(os.environ.get("LOCALAPPDATA", ""), "HafutzaTyping", "log.txt")
 seen = os.path.getsize(log) if os.path.exists(log) else 0
 t = last = time.time()
