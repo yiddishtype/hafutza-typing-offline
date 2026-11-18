@@ -1,0 +1,100 @@
+name: build
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Tag to publish the installer under (empty = test only)"
+        default: ""
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: machine
+        run: |
+          Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors | Format-List
+          Get-CimInstance Win32_ComputerSystem | Select-Object TotalPhysicalMemory | Format-List
+          Get-PSDrive -PSProvider FileSystem | Format-Table
+          (Get-CimInstance Win32_OperatingSystem).Caption
+      - name: python packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller==6.22.3 pillow
+          pip uninstall -y onnxruntime
+      - name: models that go into the installer (Yiddish speech) + small files of all
+        run: |
+          gh release download models-v1 -p small-files.zip -p models.json -p yi-model.bin -D build\dl
+          Expand-Archive build\dl\small-files.zip build\models
+          Move-Item build\dl\models.json build\models\
+          Move-Item build\dl\yi-model.bin build\models\yi\model.bin
+          Get-ChildItem -Recurse build\models | Format-Table Length,FullName
+      - name: icon
+        run: python tools/make_icon.py build\hafutza.ico
+      - name: pyinstaller
+        run: |
+          pyinstaller --noconfirm --windowed --name HafutzaTyping --icon build\hafutza.ico --paths app `
+            --collect-all ctranslate2 --collect-data faster_whisper --hidden-import sentencepiece `
+            --exclude-module onnxruntime --exclude-module tkinter --exclude-module torch app\hafutza.py
+          Copy-Item -Recurse build\models dist\HafutzaTyping\models
+          Copy-Item build\hafutza.ico dist\HafutzaTyping\
+          "{0:N0} MB" -f ((Get-ChildItem -Recurse dist\HafutzaTyping | Measure-Object Length -Sum).Sum / 1MB)
+      - name: installer
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\hafutza.iss
+          Get-ChildItem Output | Format-Table Length,Name
+      - name: install (silent, like a user would with Next-Next-Install)
+        run: |
+          $p = Start-Process -FilePath Output\HafutzaTyping-Setup.exe -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=C:\st-install.log' -PassThru -Wait
+          "installer exit $($p.ExitCode)"
+          Get-ChildItem "$env:LOCALAPPDATA\Programs\Hafutza Typing" | Format-Table Length,Name
+          Test-Path "$env:USERPROFILE\Desktop\Hafutza Typing.lnk"
+          if ($p.ExitCode -ne 0) { Get-Content C:\st-install.log -Tail 40; exit 1 }
+      - name: test 1 - Yiddish clip with a Hebrew file name, all 5 outputs (downloads the other parts the way a user does)
+        run: |
+          New-Item -ItemType Directory -Force C:\st | Out-Null
+          python -c "import shutil; shutil.copy('tests/clip30.mp3', 'C:/st/\u05d1\u05d3\u05d9\u05e7\u05d4 clip30.mp3')"
+          python -c "import os; print(os.listdir('C:/st'))"
+          python tools/run_selftest.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" "C:\st\$([char]0x05d1)$([char]0x05d3)$([char]0x05d9)$([char]0x05e7)$([char]0x05d4) clip30.mp3" yi yi,en,he,es,fr C:\st\t1 --download --timeout 60
+      - name: test 2 - English speech (Windows' own voice) to English + Yiddish
+        continue-on-error: true
+        shell: powershell
+        run: |
+          Add-Type -AssemblyName System.Speech
+          $s = New-Object System.Speech.Synthesis.SpeechSynthesizer
+          $s.SetOutputToWaveFile("C:\st\english.wav")
+          $s.Speak("Good morning. Today we will talk about the history of the town and the people who built it. Thank you for coming, and please sit down.")
+          $s.Dispose()
+          python tools/run_selftest.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" C:\st\english.wav en en,yi C:\st\t2 --timeout 20
+      - name: test 3 - a video file (mp4) to Yiddish
+        continue-on-error: true
+        run: |
+          python tools/run_selftest.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" tests\clip30.mp4 yi yi C:\st\t3 --timeout 20
+      - name: publish installer
+        if: ${{ inputs.release != '' }}
+        run: |
+          gh release view ${{ inputs.release }} 2>$null
+          if ($?) { gh release upload ${{ inputs.release }} Output\HafutzaTyping-Setup.exe --clobber }
+          else { gh release create ${{ inputs.release }} Output\HafutzaTyping-Setup.exe --title "Hafutza Typing ${{ inputs.release }} for Windows" --notes-file installer\release-notes.md }
+      - name: test 4 - speed, 13.8 minutes of Yiddish to Yiddish + English
+        continue-on-error: true
+        run: |
+          python tools/run_selftest.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" tests\long.mp3 yi yi,en C:\st\t4 --timeout 60
+      - name: keep screenshots and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest
+          path: |
+            C:\st\t*\*.png
+            C:\st\t*\*.json
+            C:\st\t*\*.txt
+          retention-days: 14
