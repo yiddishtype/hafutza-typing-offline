@@ -1,6 +1,8 @@
 name: ai-probe
 on:
   workflow_dispatch:
+  push:
+    branches: [ai-probe]
 permissions:
   contents: read
 jobs:
