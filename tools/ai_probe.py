@@ -90,8 +90,7 @@ def peak_mem(pid):
 
 def start_server(threads):
     log = open(OUT + ".server%d.log" % threads, "w", encoding="utf-8")
-    p = subprocess.Popen([SERVER, "-m", MODEL, "-c", "4096", "-t", str(threads), "--jinja", "--port", "8080",
-                          "--no-mmap"], stdout=log, stderr=subprocess.STDOUT)
+    p = subprocess.Popen([SERVER, "-m", MODEL, "-c", "4096", "-t", str(threads), "--jinja", "--port", "8080"], stdout=log, stderr=subprocess.STDOUT)
     t0 = time.time()
     while True:
         try:
