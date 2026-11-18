@@ -7,6 +7,7 @@ for translation and Hebrew / English / Spanish / French speech, if they are not 
 Self-test (used by the build machine):
   HafutzaTyping.exe --selftest FILE [--more FILE ...] [--drop] --spoken yi --targets yi,en,he,es,fr --out DIR [--download]
   HafutzaTyping.exe --update-test MANIFEST_URL --out DIR       (presses Update by itself; installs if newer)
+  HafutzaTyping.exe --badge-test MANIFEST_URL --expect blue|plain --out DIR  (start look: Update button blue only if newer)
 """
 import os, sys
 
@@ -83,7 +84,8 @@ QFrame#drop { border: 3px dashed #6d9bd1; border-radius: 12px; background: #f3f8
 QFrame#drop[hot="true"] { border: 3px solid #1e7e34; background: #e3f6e8; }
 QFrame#drop:disabled { border-color: #c8ccd2; background: #f6f7f8; }
 QPushButton#update { font-size: 11pt; padding: 6px 12px; }
-QPushButton#update[news="true"] { background: #fff3cd; border: 2px solid #d39e00; font-weight: bold; }
+QPushButton#update[news="true"] { background: #2f7bd0; color: white; border: 2px solid #1d5ea8; font-weight: bold; }
+QPushButton#update[news="true"]:hover { background: #2569b8; }
 """
 
 
@@ -980,9 +982,9 @@ class Window(QMainWindow):
         d.exec()
         return d
 
-    def quiet_check(self):
-        """A quiet look at start: if there is a newer version, the Update button says so. No internet = nothing happens."""
-        self._qc = UpdateCheck()
+    def quiet_check(self, url=None):
+        """A quiet look at start: if there is a newer version, the Update button turns blue and says so. No internet = nothing happens."""
+        self._qc = UpdateCheck(url)
         self._qc.done.connect(self.quiet_checked)
         self._qc.start()
 
@@ -1659,6 +1661,27 @@ def update_test(app, win, a):
     d.show()
 
 
+def badge_test(app, win, a):
+    """Build-machine test: the start look against a test update.json; the Update button must be blue only when newer."""
+    out = os.path.abspath(a.out); os.makedirs(out, exist_ok=True)
+
+    def rep():
+        b = win.update_btn
+        img = b.grab().toImage()
+        c = img.pixelColor(4, img.height() // 2)
+        blue = c.blue() > c.red() + 60 and c.blue() > 150
+        r = {"version": VERSION, "news": b.property("news") == "true", "blue": blue, "text": b.text(),
+             "pixel": [c.red(), c.green(), c.blue()]}
+        json.dump(r, open(os.path.join(out, "report.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        b.grab().save(os.path.join(out, "button.png")); win.grab().save(os.path.join(out, "window.png"))
+        log("badge test: %s" % r)
+        want = a.expect == "blue"
+        app.exit(0 if (r["news"] == want and blue == want) else 1)
+
+    win.quiet_check(a.badge_test)
+    QTimer.singleShot(int((a.report_after or 8) * 1000), rep)
+
+
 def request_test(app, win, a):
     """Build-machine test of Update -> Request an update: 1) no internet: the request is kept;
     2) internet back: the kept one goes; 3) a new one is sent and "Got it" shows. Exit 0 only if all three held."""
@@ -1741,7 +1764,7 @@ def main():
     ap.add_argument("--out", default="selftest"); ap.add_argument("--download", action="store_true")
     ap.add_argument("--more", action="append", default=[]); ap.add_argument("--drop", action="store_true")
     ap.add_argument("--update-test"); ap.add_argument("--click-test"); ap.add_argument("--link-test"); ap.add_argument("--report-after", type=float)
-    ap.add_argument("--player-test"); ap.add_argument("--request-test")
+    ap.add_argument("--player-test"); ap.add_argument("--request-test"); ap.add_argument("--badge-test"); ap.add_argument("--expect", default="blue")
     a, _ = ap.parse_known_args()
     files = [f for f in a.files if os.path.isfile(f)]
     test = bool(a.selftest or a.update_test is not None or a.click_test or a.link_test or a.player_test or a.request_test)
@@ -1775,6 +1798,8 @@ def main():
         link_test(app, win, a)
     elif a.request_test:
         request_test(app, win, a)
+    elif a.badge_test:
+        badge_test(app, win, a)
     elif a.player_test:
         import player
         player.player_test(app, win, a.player_test, os.path.abspath(a.out))

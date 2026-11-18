@@ -5,6 +5,7 @@ NOTES = {
         "The Update button now has two parts: 1) Update - see what is new and update with one press; "
         "2) Request an update - write what you want changed or added, press Send, and it reaches us.",
         "No internet when you send a request? It is kept and goes by itself the next time the internet is on.",
+        "The Update button turns blue when a new version is ready.",
     ],
     "1.2": [
         "Watch a typed video with the text on it, and fix the text.",

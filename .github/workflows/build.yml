@@ -137,6 +137,14 @@ jobs:
           $p = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" -ArgumentList '--request-test', "run-${{ github.run_id }}", '--out', 'C:\st\t11' -PassThru -Wait
           Get-Content C:\st\t11\report.json
           if ($p.ExitCode -ne 0) { "REQUEST TEST FAILED"; exit 1 }
+      - name: test 12 - Update button turns blue when a newer version is out, normal when not
+        run: |
+          $exe = "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe"
+          $a = Start-Process -FilePath $exe -ArgumentList '--badge-test', 'file:///C:/upd/new.json', '--expect', 'blue', '--report-after', '8', '--out', 'C:\st\t12a' -PassThru -Wait
+          Get-Content C:\st\t12a\report.json
+          $b = Start-Process -FilePath $exe -ArgumentList '--badge-test', 'file:///C:/upd/same.json', '--expect', 'plain', '--report-after', '8', '--out', 'C:\st\t12b' -PassThru -Wait
+          Get-Content C:\st\t12b\report.json
+          if ($a.ExitCode -ne 0 -or $b.ExitCode -ne 0) { "BLUE BUTTON TEST FAILED"; exit 1 }
       - name: test 6 - a double click on the drop box opens the file browser once
         run: |
           $p = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" -ArgumentList '--click-test', "$pwd\tests\clip30.mp4", '--out', 'C:\st\t6' -PassThru -Wait
