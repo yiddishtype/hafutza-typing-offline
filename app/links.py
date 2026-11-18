@@ -39,8 +39,11 @@ def _plain(msg):
     if "http error 404" in m or "http error 410" in m or "video unavailable" in m or "has been removed" in m \
             or "no longer available" in m:
         return "This video is not there any more (or the link is wrong)."
+    if "not a bot" in m or "not a robot" in m:
+        return ("The site asked this computer to prove it is not a robot, so the program can't get the video now. "
+                "Try again later, or save the video on your computer and drop the file in.")
     if any(k in m for k in ("login", "log in", "sign in", "signin", "cookies", "private video", "registered users",
-                            "members-only", "age-restricted", "inappropriate", "not a bot", "authentication",
+                            "members-only", "age-restricted", "inappropriate", "authentication",
                             "requires authentication", "you need to log")):
         return ("This link needs a sign-in (it is private, members-only, or the site wants you logged in), so the "
                 "program can't get it. Save the video on your computer (or drag it out of WhatsApp) and drop the file in.")
