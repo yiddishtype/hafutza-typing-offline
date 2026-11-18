@@ -513,7 +513,12 @@ class Window(QMainWindow):
         return True
 
     def on_progress(self, f):
-        self.bar.setValue(int(f * 1000))
+        if f <= 0:
+            self.bar.setRange(0, 0)          # moving "busy" bar until the first real progress comes in
+        else:
+            if self.bar.maximum() == 0:
+                self.bar.setRange(0, 1000)
+            self.bar.setValue(int(f * 1000))
 
     def got(self, lang, text):
         tab = self.tabs_by_lang.get(lang)
