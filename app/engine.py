@@ -250,8 +250,10 @@ def pieces(x, window=600, seam=30):
 
 
 # ------------------------------------------------------------------ typing
-def transcribe(x, spoken, progress, stop):
-    """progress(fraction, last_lines) as it goes. Returns the text, one line per stretch of speech."""
+def transcribe(x, spoken, progress, stop, hotwords=None, segments=None):
+    """progress(fraction, last_lines) as it goes. Returns the text, one line per stretch of speech.
+    segments: a list that gets one (start_seconds, end_seconds, text) per line (for the video player).
+    hotwords: words he taught it (his fixes), given to the speech model as a hint."""
     from faster_whisper import WhisperModel
     import numpy as np
     path = model_path(SPEECH_MODEL[spoken])
@@ -259,18 +261,23 @@ def transcribe(x, spoken, progress, stop):
     model = WhisperModel(path, device="cpu", compute_type="int8", cpu_threads=threads(), local_files_only=True)
     dur = len(x) / RATE
     lines = []
+    segs = segments if segments is not None else []
     said = time.time()
+    kw = {"hotwords": hotwords} if hotwords else {}
+    if hotwords:
+        log("hint words for the speech model: %s" % hotwords)
     try:
         for s0, s1 in pieces(x):
             log("typing %.0f-%.0f s of %.0f" % (s0 / RATE, s1 / RATE, dur))
             a = np.asarray(x[s0:s1], dtype=np.float32) / 32768.0
-            segs, info = model.transcribe(a, language=spoken, beam_size=5)
-            for s in segs:
+            segs_, info = model.transcribe(a, language=spoken, beam_size=5, **kw)
+            for s in segs_:
                 if stop():
                     raise Stopped()
-                t = s.text.strip()
+                t = " ".join(s.text.split())
                 if t:
                     lines.append(t)
+                    segs.append((round(s0 / RATE + s.start, 2), round(s0 / RATE + s.end, 2), t))
                 progress(min(0.999, (s0 / RATE + s.end) / max(dur, 1)), lines[-6:])
                 if time.time() - said > 60:
                     said = time.time()
@@ -303,7 +310,7 @@ class Translator:
             res = self.tr.translate_batch(toks, target_prefix=[[NLLB_CODE[tgt]]] * len(toks), beam_size=4,
                                           max_decoding_length=300, repetition_penalty=1.1, no_repeat_ngram_size=4)
             for i, r in zip(part, res):
-                out[i] = self.sp.decode([t for t in r.hypotheses[0] if t not in (NLLB_CODE[tgt], "</s>")])
+                out[i] = " ".join(self.sp.decode([t for t in r.hypotheses[0] if t not in (NLLB_CODE[tgt], "</s>")]).split())
             progress(min(1.0, (k + len(part)) / max(1, len(idx))))
         return "\n".join(out)
 

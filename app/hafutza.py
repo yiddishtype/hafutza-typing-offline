@@ -46,6 +46,8 @@ try:
     import engine
     import updater
     import links
+    import learn
+    import project
     from engine import LANGS, NAME_YI, NAME_EN, log
 except Exception:
     _excepthook(*sys.exc_info())
@@ -115,6 +117,8 @@ class Job(QThread):
         self.path, self.spoken, self.targets = path, spoken, targets
         self._stop = False
         self.times = {}
+        self.docs = docs_dir()
+        self.segments, self.texts = [], {}
 
     def stop(self):
         self._stop = True
@@ -145,12 +149,31 @@ class Job(QThread):
                                       "שריט 2: מען שרייבט אויף"))
                 self.partial.emit("\n".join(lines))
 
-            text = engine.transcribe(x, self.spoken, prog, stop)
+            hot = None
+            try:
+                hot = learn.hotwords(self.spoken)
+            except Exception as e:
+                log("learned words not read: %r" % e)
+            self.times["hint_words"] = hot or ""
+            segs = []
+            text = engine.transcribe(x, self.spoken, prog, stop, hotwords=hot, segments=segs)
             self.times["typing"] = time.time() - t1
             del x
             if not text:
                 self.done.emit(False, both("No speech could be heard in this file.", "מען האט נישט געהערט קיין רעדן אין דעם פייל"))
                 return
+            lines = [t for _s, _e, t in segs]
+            fixed = 0
+            try:                    # his earlier fixes (learned words), done by themselves
+                for i, l in enumerate(lines):
+                    lines[i], n = learn.apply("speech", self.spoken, l)
+                    fixed += n
+            except Exception as e:
+                log("learned fixes not done: %r" % e)
+            self.times["learned_fixes_typing"] = fixed
+            self.segments = [(s, e) for s, e, _t in segs]
+            self.texts = {self.spoken: lines}
+            text = "\n".join(lines)
             if self.spoken in self.targets:
                 self.result.emit(self.spoken, text)
             others = [t for t in self.targets if t != self.spoken]
@@ -165,10 +188,30 @@ class Job(QThread):
                                    "שריט 3: מען זעצט איבער אויף %s" % NAME_YI[tgt])
                         self.status.emit(msg)
                         out = tr.translate(text, self.spoken, tgt, lambda f: self.progress.emit(f), stop)
-                        self.result.emit(tgt, out)
+                        tl = out.split("\n")
+                        if len(tl) != len(lines):
+                            log("translation lines %d != %d" % (len(tl), len(lines)))
+                            tl = (tl + [""] * len(lines))[:len(lines)]
+                        n = 0
+                        try:
+                            for i, l in enumerate(tl):
+                                tl[i], k = learn.apply("tr", tgt, l)
+                                n += k
+                        except Exception as e:
+                            log("learned translation fixes not done: %r" % e)
+                        self.times["learned_fixes_" + tgt] = n
+                        self.texts[tgt] = tl
+                        self.result.emit(tgt, "\n".join(tl))
                         self.times["translate_" + tgt] = time.time() - t2
                 finally:
                     tr.close()
+            try:                    # keep the timings, for watching the video with its text and fixing it
+                proj = project.make(self.path, self.spoken, self.targets, self.segments, self.texts)
+                project.save(proj)
+                project.export(proj, self.docs)
+                self.times["project"] = len(proj["segments"])
+            except Exception as e:
+                log("project not saved: " + traceback.format_exc())
             self.times["total"] = time.time() - t0
             log("job done %s" % self.times)
             self.done.emit(True, both("Done! It took %s." % hms(time.time() - t0), "פארטיג"))
@@ -661,6 +704,13 @@ class Window(QMainWindow):
         self.update_btn.clicked.connect(self.do_update)
         head.addWidget(self.update_btn)
         lay.addLayout(head)
+        hrow = QHBoxLayout()
+        self.videos_btn = QPushButton(both("My typed videos (watch and fix)", "מיינע ווידעאס (זען און פארריכטן)"))
+        self.videos_btn.clicked.connect(self.my_videos)
+        self.learned_btn = QPushButton(both("Learned words", "געלערנטע ווערטער"))
+        self.learned_btn.clicked.connect(self.learned_words)
+        hrow.addWidget(self.videos_btn); hrow.addWidget(self.learned_btn); hrow.addStretch(1)
+        lay.addLayout(hrow)
         sub = QHBoxLayout()
         sub.addWidget(QLabel("Video or recording in, typed text out. No internet needed."))
         sub.addStretch(1)
@@ -773,6 +823,16 @@ class Window(QMainWindow):
         vr.addWidget(self.view_pick, 1)
         self.view_row.hide()
         lay.addWidget(self.view_row)
+
+        self.watch_btn = QPushButton(both("▶   Watch the video with the text on it, and fix the text",
+                                          "זען דעם ווידעא מיטן טעקסט, און פארריכטן דעם טעקסט"))
+        self.watch_btn.setObjectName("watch")
+        self.watch_btn.setStyleSheet("QPushButton#watch { background: #2f7bd0; color: white; font-size: 14pt; font-weight: bold;"
+                                     " border: none; min-height: 56px; } QPushButton#watch:hover { background: #2568b3; }")
+        self.watch_btn.clicked.connect(lambda: self.open_player(self.shown_path()))
+        self.watch_btn.hide()
+        lay.addWidget(self.watch_btn)
+        self.players = {}
 
         self.tabs = QTabWidget()
         self.tabs.hide()
@@ -1017,6 +1077,7 @@ class Window(QMainWindow):
         self.results[self.path] = {}
         self.make_tabs(targets)
         self.tabs.hide()
+        self.watch_btn.hide()
         self.partial.clear(); self.partial.show()
         rtl = spoken in RTL
         self.partial.setLayoutDirection(Qt.RightToLeft if rtl else Qt.LeftToRight)
@@ -1070,6 +1131,7 @@ class Window(QMainWindow):
         self.make_tabs(self.run_targets, self.results.get(p, {}))
         self.tabs.setCurrentIndex(0)
         self.tabs.show()
+        self.show_watch()
 
     def on_progress(self, f):
         if f <= 0:
@@ -1135,11 +1197,78 @@ class Window(QMainWindow):
         for w in (*self.spoken_btn.values(), *self.target_box.values(), self.clear_btn):
             w.setEnabled(True)
         self.show_files()
+        self.show_watch()
         if self.tabs.count() and any(t.edit.toPlainText() for t in self.tabs_by_lang.values()):
             self.tabs.show()
             self.tabs.setCurrentIndex(0)
             QTimer.singleShot(100, lambda: self.scroll.ensureWidgetVisible(self.tabs, 0, 0))
         self.last_ok = ok if n_files <= 1 else (not stopped and not self.problems)
+
+    # -- the video player
+    def show_watch(self):
+        p = self.shown_path()
+        self.watch_btn.setVisible(bool(p and not self.job and project.load(p)))
+
+    def open_player(self, video):
+        try:
+            import player
+        except Exception as e:
+            log("player not loaded: " + traceback.format_exc())
+            QMessageBox.warning(self, TITLE, "The video player could not start (%s)." % e)
+            return None
+        proj = project.load(video) if video else None
+        if not proj:
+            QMessageBox.information(self, TITLE, both("This file has no saved timings. Type it again with this version to watch it with its text.",
+                                                      "טייפט עס נאכאמאל מיט די נייע ווערסיע"))
+            return None
+        if not os.path.isfile(proj["video"]):
+            QMessageBox.information(self, TITLE, both("The video file is not there any more:\n" + proj["video"],
+                                                      "דער פייל איז נישטא מער"))
+            return None
+        old = self.players.get(proj["video"])
+        if old is not None:
+            try:
+                old.showNormal(); old.raise_(); old.activateWindow()
+                return old
+            except RuntimeError:
+                pass
+        w = player.Player(self, proj, docs_dir())
+        w.setAttribute(Qt.WA_DeleteOnClose)
+        w.saved.connect(self.player_saved)
+        w.destroyed.connect(lambda _=None, k=proj["video"]: self.players.pop(k, None))
+        self.players[proj["video"]] = w
+        w.show()
+        return w
+
+    def player_saved(self, video):
+        proj = project.load(video)
+        if not proj:
+            return
+        key = next((p for p in self.results if os.path.abspath(p) == os.path.abspath(video)), None)
+        if key is None:
+            return
+        for l in self.results[key]:
+            self.results[key][l] = project.text_of(proj, l)
+        if self.shown_path() and os.path.abspath(self.shown_path()) == os.path.abspath(video):
+            for l, tab in self.tabs_by_lang.items():
+                if l in self.results[key]:
+                    tab.edit.setPlainText(self.results[key][l])
+
+    def my_videos(self):
+        try:
+            import player
+            player.VideosDialog(self, docs_dir()).exec()
+        except Exception as e:
+            log("videos dialog: " + traceback.format_exc())
+            QMessageBox.warning(self, TITLE, str(e))
+
+    def learned_words(self):
+        try:
+            import player
+            player.LearnedDialog(self).exec()
+        except Exception as e:
+            log("learned dialog: " + traceback.format_exc())
+            QMessageBox.warning(self, TITLE, str(e))
 
     def stop(self):
         if self.job:
@@ -1226,6 +1355,16 @@ def selftest(app, win, a):
         log("selftest: finished ok=%s %s" % (ok, msg.splitlines()[0] if msg else ""))
         rep["ok"], rep["message"] = ok, msg
         rep["times"] = getattr(win, "last_times", {})
+        try:
+            pr = project.load(win.path_last)
+            rep["project_lines"] = len(pr["segments"]) if pr else 0
+            rep["project_first"] = pr["segments"][:2] if pr else None
+            rep["srt_saved"] = all(os.path.exists(os.path.join(docs_dir(), "Hafutza Typing", win.file_name(l, win.path_last)[:-4] + ".srt"))
+                                   for l in rep["targets"])
+            shot("5-watch-button")
+            rep["watch_button"] = win.watch_btn.isVisible()
+        except Exception:
+            rep["project_error"] = traceback.format_exc()
         rep["texts"] = {}
         for i, (lang, tab) in enumerate(win.tabs_by_lang.items()):
             win.tabs.setCurrentIndex(i)
@@ -1410,9 +1549,10 @@ def main():
     ap.add_argument("--out", default="selftest"); ap.add_argument("--download", action="store_true")
     ap.add_argument("--more", action="append", default=[]); ap.add_argument("--drop", action="store_true")
     ap.add_argument("--update-test"); ap.add_argument("--click-test"); ap.add_argument("--link-test"); ap.add_argument("--report-after", type=float)
+    ap.add_argument("--player-test")
     a, _ = ap.parse_known_args()
     files = [f for f in a.files if os.path.isfile(f)]
-    test = bool(a.selftest or a.update_test is not None or a.click_test or a.link_test)
+    test = bool(a.selftest or a.update_test is not None or a.click_test or a.link_test or a.player_test)
     other = updater.hold_mutex()
     app = QApplication(sys.argv)
     app.setApplicationName(TITLE)
@@ -1441,6 +1581,9 @@ def main():
         click_test(app, win, a)
     elif a.link_test:
         link_test(app, win, a)
+    elif a.player_test:
+        import player
+        player.player_test(app, win, a.player_test, os.path.abspath(a.out))
     elif a.report_after:
         def rep():
             out = os.path.abspath(a.out); os.makedirs(out, exist_ok=True)

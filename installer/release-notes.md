@@ -1,6 +1,14 @@
 **Hafutza Typing for Windows** - types up Yiddish (and Hebrew, English, Spanish, French) videos and recordings on your own computer, with no internet, and translates them to Yiddish, English, Hebrew, Spanish and French.
 
-Download **HafutzaTyping-Setup.exe** below and open it. (Already have version 1.0? Install this one over it: your typed texts and the downloaded parts are kept. From version 1.1 on, the program's **Update** button does this by itself.)
+Download **HafutzaTyping-Setup.exe** below and open it. (Have version 1.1? Just press the program's **Update** button. Have version 1.0? Install this one over it. Your typed texts and the downloaded parts are kept.)
+
+New in 1.2:
+- **Watch and fix**: after a video is typed, press **Watch the video with the text on it, and fix the text**. The video plays with the typing and the translation on it, line by line.
+- **Play / Pause** (or the space bar), and buttons to go **back or forward 5, 10 or 15 seconds**. Click any line in the list to jump there.
+- Fix a line: erase it, type it again, or use the on-screen **Yiddish keyboard**. Press **Save the fix** (or Enter): the .txt and .srt files are written again with the fix.
+- **The program learns your fixes**: a word you fix is remembered and fixed by itself in the next videos (in the typing and in the translations), and is given to the speech part as a hint word. See or delete what it learned under **Learned words**. (The big speech and translation models are not retrained; it is your own word list.)
+- **My typed videos**: open any video typed with 1.2 again to watch and fix. (Videos typed before 1.2 have no line timings: type them again to watch them. Video links are fetched as sound only, so they show the text on a dark screen.)
+- Each typed text is also saved as subtitles (.srt) next to the .txt.
 
 New in 1.1:
 - **Update** button (top right): checks for a new version and installs it with one click (downloads only the program, not the big speech parts). It also quietly checks when the program opens.

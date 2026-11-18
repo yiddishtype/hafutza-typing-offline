@@ -27,6 +27,14 @@ def texts():
     return sorted(os.listdir(docs)) if os.path.isdir(docs) else []
 
 
+def userdata():
+    """His typed videos with their timings (for the player) and his learned words: must survive an update."""
+    v = os.path.join(lad, "videos")
+    names = sorted(os.listdir(v)) if os.path.isdir(v) else []
+    lj = os.path.join(lad, "learned.json")
+    return {"videos": names, "learned": open(lj, encoding="utf-8").read() if os.path.exists(lj) else None}
+
+
 def ver():
     try:
         return open(os.path.join(app, "version.txt"), encoding="utf-8").read().strip()
@@ -54,7 +62,7 @@ def logtail(n=4000):
     return open(p, encoding="utf-8", errors="replace").read()[-n:] if os.path.exists(p) else ""
 
 
-before = {"version": ver(), "reg": reg_version(), "models": models(), "texts": texts()}
+before = {"version": ver(), "reg": reg_version(), "models": models(), "texts": texts(), "user": userdata()}
 print("before", json.dumps(before, indent=1))
 args = [exe, "--update-test", manifest, "--out", out] if manifest != "real" else [exe, "--update-test", "", "--out", out]
 t = time.time()
@@ -82,7 +90,7 @@ else:
         ImageGrab.grab().save(os.path.join(out, "after-update-screen.png"))
     except Exception as e:
         print("screen picture failed", e)
-    after = {"version": ver(), "reg": reg_version(), "models": models(), "texts": texts()}
+    after = {"version": ver(), "reg": reg_version(), "models": models(), "texts": texts(), "user": userdata()}
     print("after", json.dumps(after, indent=1))
     il = os.path.join(lad, "update-install-log.txt")
     if os.path.exists(il):
@@ -92,7 +100,10 @@ else:
     print("program log shows 'start %s': %s" % (expect, reopened))
     checks = {"new version in": after["version"] == expect, "uninstall entry version": after["reg"] == expect,
               "reopened by itself": bool(running()) and reopened, "models kept": after["models"] == before["models"],
-              "texts kept": set(before["texts"]) <= set(after["texts"])}
+              "texts kept": set(before["texts"]) <= set(after["texts"]),
+              "typed videos kept": set(before["user"]["videos"]) <= set(after["user"]["videos"]),
+              "learned words kept": before["user"]["learned"] == after["user"]["learned"],
+              "there were typed videos to keep": bool(before["user"]["videos"]) and before["user"]["learned"] is not None}
     print("checks", checks)
     ok = ok and all(checks.values())
     subprocess.run(["taskkill", "/IM", "HafutzaTyping.exe", "/F"], capture_output=True)
