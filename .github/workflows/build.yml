@@ -119,7 +119,7 @@ jobs:
           if ($p.ExitCode -ne 0) { exit 1 }
       - name: test 7 - Open with (the registered command) hands 2 files to the open window
         run: |
-          $a = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" -ArgumentList '--report-after', '45', '--out', 'C:\st\t7' -PassThru
+          $a = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" -ArgumentList '--report-after', '70', '--out', 'C:\st\t7' -PassThru
           Start-Sleep 12
           $cmd = (Get-ItemProperty "HKCU:\Software\Classes\Applications\HafutzaTyping.exe\shell\open\command").'(default)'
           foreach ($f in @("$pwd\tests\clip30.mp4", "$pwd\tests\clip60.mp4")) {

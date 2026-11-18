@@ -1269,11 +1269,14 @@ def send_to_running(files):
         s = QLocalSocket()
         s.connectToServer(PIPE)
         if s.waitForConnected(250):
-            s.write(msg + b"\n"); s.flush()
-            ok = s.waitForBytesWritten(3000)
-            s.waitForReadyRead(3000)
+            n = s.write(msg + b"\n")
+            s.flush()
+            if s.bytesToWrite():
+                s.waitForBytesWritten(3000)
+            answered = s.waitForReadyRead(5000) and bytes(s.readAll()).startswith(b"ok")
+            log("hand-over: wrote %s of %d bytes, answer %s" % (n, len(msg) + 1, answered))
             s.disconnectFromServer()
-            return ok
+            return answered or n == len(msg) + 1
         time.sleep(0.25)
     return False
 
