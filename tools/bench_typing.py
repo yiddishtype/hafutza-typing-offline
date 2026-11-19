@@ -10,7 +10,7 @@ from faster_whisper import WhisperModel, BatchedInferencePipeline
 mdir, f, out, cfg = sys.argv[1], sys.argv[2], sys.argv[3], json.loads(sys.argv[4])
 tmp = tempfile.mkdtemp()
 t0 = time.time()
-x = engine.read_sound(f, tmp, lambda p: None)
+x = engine.read_sound(f, tmp, lambda p: None, lambda: False)
 RATE = engine.RATE
 t_read = time.time() - t0
 t0 = time.time()
