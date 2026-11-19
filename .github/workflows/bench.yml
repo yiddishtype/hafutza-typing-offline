@@ -1,0 +1,47 @@
+name: bench
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  typing:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        cfg:
+          - '{"name":"base-beam5-t4","beam":5,"threads":4}'
+          - '{"name":"beam5-t2","beam":5,"threads":2}'
+          - '{"name":"beam2-t4","beam":2,"threads":4}'
+          - '{"name":"beam1-t4","beam":1,"threads":4}'
+          - '{"name":"beam5-nocond-t4","beam":5,"threads":4,"cond":false}'
+          - '{"name":"batch8-beam5-t4","beam":5,"threads":4,"batch":8}'
+          - '{"name":"batch8-beam1-t4","beam":1,"threads":4,"batch":8}'
+          - '{"name":"batch4-beam2-t4","beam":2,"threads":4,"batch":4}'
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: packages and Yiddish model
+        run: |
+          pip install faster-whisper==1.2.1 ctranslate2==4.9.0 av==16.1.0 numpy==2.5.4 tokenizers==0.23.3 huggingface-hub==2.2.0
+          pip uninstall -y onnxruntime
+          gh release download models-v1 -p small-files.zip -p yi-model.bin -D dl
+          Expand-Archive dl\small-files.zip models
+          Move-Item dl\yi-model.bin models\yi\model.bin
+      - name: clip60 (website compare)
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          python tools/bench_typing.py models\yi tests\clip60.mp4 out\clip60.json '${{ matrix.cfg }}'
+          python tools/compare.py tests\site-clip60-yi.txt out\clip60.txt
+      - name: long 13.8 min
+        run: python tools/bench_typing.py models\yi tests\long.mp3 out\long.json '${{ matrix.cfg }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ strategy.job-index }}
+          path: out
