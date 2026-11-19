@@ -12,13 +12,10 @@ jobs:
       matrix:
         cfg:
           - '{"name":"base-beam5-t4","beam":5,"threads":4}'
-          - '{"name":"beam5-t2","beam":5,"threads":2}'
-          - '{"name":"beam2-t4","beam":2,"threads":4}'
-          - '{"name":"beam1-t4","beam":1,"threads":4}'
-          - '{"name":"beam5-nocond-t4","beam":5,"threads":4,"cond":false}'
-          - '{"name":"batch8-beam5-t4","beam":5,"threads":4,"batch":8}'
-          - '{"name":"batch8-beam1-t4","beam":1,"threads":4,"batch":8}'
-          - '{"name":"batch4-beam2-t4","beam":2,"threads":4,"batch":4}'
+          - '{"name":"batch8-beam5-ts-c25","beam":5,"threads":4,"batch":8,"ts":true}'
+          - '{"name":"batch8-beam5-ts-c30","beam":5,"threads":4,"batch":8,"ts":true,"chunk":30}'
+          - '{"name":"batch4-beam5-ts-c30","beam":5,"threads":4,"batch":4,"ts":true,"chunk":30}'
+          - '{"name":"batch8-beam5-ts-c20","beam":5,"threads":4,"batch":8,"ts":true,"chunk":20}'
     env:
       GH_TOKEN: ${{ github.token }}
       PYTHONUTF8: "1"
@@ -29,7 +26,7 @@ jobs:
           python-version: "3.12"
       - name: packages and Yiddish model
         run: |
-          pip install faster-whisper==1.2.1 ctranslate2==4.9.0 av==16.1.0 numpy==2.5.4 tokenizers==0.23.3 huggingface-hub==2.2.0
+          pip install faster-whisper==1.2.1 ctranslate2==4.9.0 av==16.1.0 numpy==2.5.4 tokenizers==0.23.3 huggingface-hub==2.2.0 psutil
           pip uninstall -y onnxruntime
           gh release download models-v1 -p small-files.zip -p yi-model.bin -D dl
           Expand-Archive dl\small-files.zip models

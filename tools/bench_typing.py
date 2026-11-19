@@ -27,10 +27,13 @@ if cfg.get("batch"):
     pipe = BatchedInferencePipeline(model)
     for s0, s1 in engine.pieces(x):
         a = np.asarray(x[s0:s1], dtype=np.float32) / 32768.0
-        sub = [(p0, p1) for p0, p1 in engine.pieces(x[s0:s1], window=cfg.get("chunk", 25), seam=5)]
-        clips = [{"start": p0 / RATE, "end": p1 / RATE} for p0, p1 in sub]
-        segs, info = pipe.transcribe(a, language="yi", beam_size=beam, batch_size=cfg["batch"],
-                                     vad_filter=False, clip_timestamps=clips, **kw)
+        if cfg.get("vad"):
+            kw2 = {"vad_filter": True}
+        else:
+            sub = [(p0, p1) for p0, p1 in engine.pieces(x[s0:s1], window=cfg.get("chunk", 25), seam=5)]
+            kw2 = {"vad_filter": False, "clip_timestamps": [{"start": p0 / RATE, "end": p1 / RATE} for p0, p1 in sub]}
+        segs, info = pipe.transcribe(a, language="yi", beam_size=beam, batch_size=cfg["batch"], **kw2,
+                                     without_timestamps=not cfg.get("ts", False), **kw)
         for s in segs:
             t = " ".join(s.text.split())
             if t:
@@ -44,7 +47,13 @@ else:
             if t:
                 lines.append(t)
 t_type = time.time() - t0
-rep = {"cfg": cfg, "file": os.path.basename(f), "sound_seconds": len(x) / RATE, "read": t_read, "load": t_load,
+try:
+    import psutil
+    mi = psutil.Process().memory_info()
+    peak = getattr(mi, "peak_wset", 0) or mi.rss
+except Exception:
+    peak = 0
+rep = {"peak_mb": round(peak / 2**20), "cfg": cfg, "file": os.path.basename(f), "sound_seconds": len(x) / RATE, "read": t_read, "load": t_load,
        "typing": t_type, "x_realtime": (len(x) / RATE) / t_type, "lines": len(lines)}
 print(json.dumps(rep))
 json.dump(rep, open(out, "w"))
