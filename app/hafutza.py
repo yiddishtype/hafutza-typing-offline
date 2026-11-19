@@ -382,6 +382,22 @@ class FetchDialog(QDialog):
 
 
 # ------------------------------------------------------------------ update
+class LinkCheck(QThread):
+    """Read an update another AI made, from the GitHub link Shaya pasted (in the background)."""
+    done = Signal(object, str)
+
+    def __init__(self, link):
+        super().__init__()
+        self.link = link
+
+    def run(self):
+        try:
+            self.done.emit(updater.from_link(self.link), "")
+        except Exception as e:
+            log("link update check failed %r" % e)
+            self.done.emit(None, str(e)[:300])
+
+
 class UpdateCheck(QThread):
     """Ask update.json what the newest version is (in the background)."""
     done = Signal(object, str)
@@ -442,13 +458,13 @@ class RequestSend(QThread):
 
 
 class RequestPage(QWidget):
-    """Update window, part 2: write what you want changed, press Send; it reaches us (kept and sent later if offline)."""
+    """Update window, part 2: write what you want changed; the offline AI starts on it, or a ready request for any AI (Send to Avi stays as an extra)."""
 
     def __init__(self, dlg):
         super().__init__()
         self.dlg, self.th, self.kb, self.result = dlg, None, None, ""
         lay = QVBoxLayout(self)
-        t = QLabel(both("Write what you want changed or added in the program (Yiddish or English), then press Send. It reaches us.",
+        t = QLabel(both("Write what you want changed or added in the program (Yiddish or English). The program's own AI starts on it at once, no internet. If it can't, \"Make it for any AI\" gives you a ready request to paste into any AI.",
                         "שרייבט וואס איר ווילט טוישן אדער צולייגן אינעם פראגראם, און דרוקט שיקן"))
         t.setWordWrap(True)
         f = t.font(); f.setPointSize(13); t.setFont(f)
@@ -469,8 +485,15 @@ class RequestPage(QWidget):
         if n:
             self.status.setText(both("%d request(s) written earlier are waiting for the internet; they go by themselves." % n,
                                      "פריערדיגע בקשות ווארטן אויף אינטערנעט"))
+        row0 = QHBoxLayout()
+        self.ai_btn = QPushButton(both("Ask the program's AI (no internet)", "פרעגן דעם פראגראם'ס AI")); self.ai_btn.setObjectName("start")
+        self.pkg_btn = QPushButton(both("Copy the link for any AI", "קאפירן דעם לינק פאר יעדן AI"))
+        row0.addWidget(self.ai_btn, 1); row0.addWidget(self.pkg_btn, 1)
+        lay.addLayout(row0)
+        self.ai_btn.clicked.connect(self.ask_ai)
+        self.pkg_btn.clicked.connect(self.for_any_ai)
         row = QHBoxLayout()
-        self.send_btn = QPushButton(both("Send", "שיקן")); self.send_btn.setObjectName("start")
+        self.send_btn = QPushButton(both("Send to Avi (internet)", "שיקן צו אבי"))
         self.close_btn = QPushButton(both("Close", "צומאכן"))
         row.addWidget(self.send_btn, 2); row.addWidget(self.close_btn, 1)
         lay.addLayout(row)
@@ -490,6 +513,36 @@ class RequestPage(QWidget):
         self.kb.setVisible(show)
         self.kb_btn.setText(both("Hide the keyboard", "באהאלטן די קלאוויאטור") if show
                             else both("Show the Yiddish keyboard", "אידישע קלאוויאטור"))
+
+    def ask_ai(self):
+        """Hand what he wrote to the program's own offline AI chat, which starts on it at once."""
+        text = self.box.toPlainText().strip()
+        win = self.dlg.parent()
+        if not text:
+            self.status.setText(both("Please write what you want first.", "ביטע שרייבט קודם וואס איר ווילט"))
+            return False
+        if win is None or not hasattr(win, "show_ai"):
+            return False
+        self.box.clear()
+        self.dlg.cancel()
+        d = win.show_ai(True)
+        d.box.setPlainText(text)
+        if d.th is None:
+            d.send()            # starts on it at once (or, with no AI part yet, answers with a package)
+        return True             # if it is busy, the words wait in its box
+
+    def for_any_ai(self):
+        text = self.box.toPlainText().strip()
+        if not text:
+            self.status.setText(both("Please write what you want first.", "ביטע שרייבט קודם וואס איר ווילט"))
+            return ""
+        win = self.dlg.parent() or self
+        pkg, path = extras.make_package(win, text)
+        QApplication.clipboard().setText(win.last_link)
+        self.status.setText(both("✓ Copied the link for any AI (ChatGPT, Claude, Gemini ...): paste it there and send. "
+                                 "When it gives you back a GitHub link, paste it in tab 1 under “Install an update another AI made”."
+                                 + ("\nThe full guide is also saved as a file: " + path if path else ""), "✓ קאפירט"))
+        return path
 
     def send(self):
         text = self.box.toPlainText().strip()
@@ -543,6 +596,20 @@ class UpdateDialog(QDialog):
         row.addWidget(self.go, 2); row.addWidget(self.close_btn, 1)
         lay.addStretch(1)
         lay.addLayout(row)
+        box = QGroupBox(both("Install an update another AI made", "איינשטעלן א טויש וואס אן אנדערע AI האט געמאכט"))
+        bl = QVBoxLayout(box)
+        hint = QLabel(both("If another AI made a new version for you, paste the link it gave you here "
+                           "(its copy of the program on GitHub, or its release).",
+                           "לייגט אריין דעם לינק וואס די אנדערע AI האט אייך געגעבן"))
+        hint.setWordWrap(True)
+        bl.addWidget(hint)
+        lrow = QHBoxLayout()
+        self.link_in = QLineEdit(); self.link_in.setPlaceholderText("https://github.com/...")
+        self.link_go = QPushButton(both("Install from this link", "איינשטעלן"))
+        lrow.addWidget(self.link_in, 3); lrow.addWidget(self.link_go, 1)
+        bl.addLayout(lrow)
+        lay.addWidget(box)
+        self.link_go.clicked.connect(self.from_link)
         self.req = RequestPage(self)
         self.tabs.addTab(page, "1. Update - what's new  -  דערהיינטיקן")
         self.tabs.addTab(self.req, "2. Request an update  -  בעטן א טויש")
@@ -586,6 +653,40 @@ class UpdateDialog(QDialog):
             self.close_btn.setText(both("Later", "שפעטער"))
             if self.auto:
                 QTimer.singleShot(500, self.fetch)
+
+    def from_link(self, _=None, ask=True):
+        link = self.link_in.text().strip()
+        if not link:
+            self.msg.setText(both("Paste the link the other AI gave you first.", "לייגט אריין דעם לינק"))
+            return
+        self.ask_link = ask
+        self.link_go.setEnabled(False)
+        self.bar.show(); self.bar.setRange(0, 0)
+        self.msg.setText(both("Checking that link ...", "מען קוקט דעם לינק"))
+        self.lchk = LinkCheck(link)
+        self.lchk.done.connect(self.link_checked)
+        self.lchk.start()
+
+    def link_checked(self, m, err):
+        self.lchk.wait()
+        self.bar.setRange(0, 1000); self.bar.hide()
+        self.link_go.setEnabled(True)
+        if m is None:
+            self.result_text = "link error: " + err
+            self.msg.setText(both("That link could not be used:\n" + err, "דער לינק האט נישט געארבעט"))
+            return
+        older = "" if m["newer"] else both(
+            "\nNote: it says version %s and you have %s." % (m["version"], VERSION), "")
+        text = both("This is a version made by another AI (%s), not by Avi. It was not checked by us.%s\n\n"
+                    "Your typed texts and downloaded parts are kept.\n\nInstall version %s now?"
+                    % (m["repo"], older, m["version"]), "אינסטאלירן?")
+        self.result_text = "link ok " + m["version"]
+        if getattr(self, "ask_link", True):
+            if QMessageBox.question(self, TITLE, text) != QMessageBox.Yes:
+                self.msg.setText(both("Not installed.", "נישט איינגעשטעלט"))
+                return
+        self.m = m
+        self.fetch()
 
     def fetch(self):
         self.go.setEnabled(False)
@@ -1001,8 +1102,8 @@ class AIDialog(QDialog):
         self.close_btn = QPushButton(both("Close", "צומאכן"))
         self.close_btn.clicked.connect(self.reject)
         lay.addWidget(self.close_btn)
-        self.bubble("bot", both("Hi! Ask me anything about the typed text, or tell me what to change, in Yiddish or "
-                                "English. For example: change אמונה to עמונה,  write Reb not Rabbi,  shorten the first line. "
+        self.bubble("bot", both("Hi! Ask me anything about the typed text, or tell me what to change, in Yiddish, "
+                                "Hebrew or English. For example: change אמונה to עמונה,  write Reb not Rabbi,  shorten the first line. "
                                 "I make the change right away; every change has an Undo button. I work on this computer, no internet.",
                                 "שרייבט מיר וואס צו טוישן אדער פרעגט א שאלה; איך טוישט גלייך, מיט אן Undo קנעפל"))
         self.refresh()
@@ -1012,11 +1113,13 @@ class AIDialog(QDialog):
         """who: 'me' (his message, right, purple), 'bot' (the AI, left, grey) or 'chg' (a change made, left, green)."""
         fr = QFrame(); fr.setObjectName(who)
         v = QVBoxLayout(fr); v.setContentsMargins(12, 8, 12, 8); v.setSpacing(4)
-        lb = QLabel(text); lb.setWordWrap(True)
+        rtl = sum(1 for c in text if "֐" <= c <= "׿") > len(text) / 3
+        # Hebrew or Yiddish: right-to-left even when a line starts with an English word or a number (RLM mark)
+        lb = QLabel("\n".join("\u200f" + ln for ln in text.split("\n")) if rtl else text); lb.setWordWrap(True)
         lb.setTextInteractionFlags(Qt.TextSelectableByMouse)
         f = lb.font(); f.setPointSize(12); lb.setFont(f)
-        rtl = sum(1 for c in text if "֐" <= c <= "׿") > len(text) / 3
         lb.setAlignment(Qt.AlignRight if rtl else Qt.AlignLeft)
+        lb.rtl = rtl
         v.addWidget(lb)
         if extra is not None:
             v.addWidget(extra, 0, Qt.AlignLeft)
@@ -1064,7 +1167,7 @@ class AIDialog(QDialog):
                 continue
             for fr in w.findChildren(QFrame):
                 if fr.objectName() in ("me", "bot", "chg"):
-                    out.append({"me": "You", "bot": "AI", "chg": "AI (change)"}[fr.objectName()] + ": " + fr.label.text())
+                    out.append({"me": "You", "bot": "AI", "chg": "AI (change)"}[fr.objectName()] + ": " + fr.label.text().replace("\u200f", ""))
         return "\n".join(out)
 
     @property
@@ -1165,6 +1268,12 @@ class AIDialog(QDialog):
             return False
         if not (ai.model_file() and ai.server_exe()):
             self.refresh()
+            if text is None:            # he wrote to it: always an answer, and a road for what he asked
+                self.bubble("me", instr)
+                self.box.clear()
+                extras.give_package(self, instr, both(
+                    "The AI part is not on this computer yet (the Download button above brings it, once, with "
+                    "internet).", "דער AI איז נאך נישט אויף דעם קאמפיוטער"))
             return False
         self.refresh()
         lang = self.lang.currentData()
@@ -1176,7 +1285,7 @@ class AIDialog(QDialog):
         self.changes = []
         self.ask_lang = lang
         self.send_btn.setEnabled(False)
-        self.thinking = self.bubble("bot", "…  " + both("thinking%s" % (", starting up the first time" if not
+        self.thinking = self.bubble("bot", "…  " + both("working on it%s" % (", starting up the first time" if not
                                                          self.win.ai_server.running() else ""), "טראכט"))
         self.th = AIAsk(self.win.ai_server, src, instr, self.history)
         self.th.done.connect(self.answered)
@@ -1190,10 +1299,16 @@ class AIDialog(QDialog):
             self.thinking.parentWidget().setParent(None); self.thinking = None
         self.refresh()
         if err:
-            self.bubble("bot", "(" + both("That did not work: ", "עס האט נישט געארבעט: ") + err + ")")
+            try:
+                extras.give_package(self, instr, "(" + both("That did not work: ", "עס האט נישט געארבעט: ") + err + ")")
+            except Exception:
+                log("package: " + traceback.format_exc())
+                self.bubble("bot", "(" + both("That did not work: ", "עס האט נישט געארבעט: ") + err + ")")
             return
+        p = {}
         try:
-            if extras.handle(self, ai.parse_answer(raw), instr, ch):
+            p = ai.parse_answer(raw)
+            if extras.handle(self, p, instr, ch):
                 self.history.append((instr, reply or ""))
                 return
         except Exception:
@@ -1230,6 +1345,11 @@ class AIDialog(QDialog):
                 say = reply or both("I am not sure what to change. Try naming the exact words, like: change X to Y.",
                                     "נישט זיכער וואס צו טוישן")
             self.bubble("bot", say)
+        if p.get("too_big"):            # it did the part it could (text changes); the rest goes to any AI
+            try:
+                extras.give_package(self, instr)
+            except Exception:
+                log("package: " + traceback.format_exc())
         self.history.append((instr, reply or ""))
 
     def undo(self, rec, btn=None):
@@ -2501,6 +2621,75 @@ def request_test(app, win, a):
     QTimer.singleShot(120000, lambda: finish(2))
 
 
+def ai_chat_test(app, win, a):
+    """Build-machine test of chatting with the AI in another language (Hebrew): each case in the JSON file is a
+    text + a message; the real model answers; we check it did the kind of thing asked (a change, an answer, settings,
+    an add-on, or 'too big') and that the reply is in the message's language. Writes report.json; exit 0 unless it crashed
+    or fewer than --ai-chat-min of the cases passed."""
+    import re
+    out = os.path.abspath(a.out); os.makedirs(out, exist_ok=True)
+    cases = json.load(open(a.ai_chat_test, encoding="utf-8"))
+    rep = {"version": VERSION, "model": ai.model_file(), "cases": []}
+
+    def lang_of(t):
+        heb = [c for c in t if "\u05d0" <= c <= "\u05ea"]
+        if len(heb) < max(3, len([c for c in t if c.isalpha()]) * 0.4):
+            return "en"
+        words = re.findall(r"[\u05d0-\u05ea\u05f0-\u05f2]+", t)
+        yi = sum(1 for w in words if w in ("איך", "האב", "האט", "דער", "דאס", "איז", "אויף", "פון", "געטוישט", "מיט",
+                                           "ער", "זיי", "און", "ניט", "נישט", "צו", "ווי") or "\u05f0" <= w[0] <= "\u05f2"
+                 or w.startswith("גע") and w.endswith("ט") or "וו" in w)
+        he = sum(1 for w in words if w in ("את", "של", "זה", "הוא", "היא", "על", "עם", "לא", "כן", "אני", "הם", "ביום")
+                 or w.startswith(("ה", "ו", "ב", "ל", "מ", "ש")) and len(w) > 3 and w.endswith(("תי", "ים", "ות")))
+        return "yi" if yi > he else "he"
+
+    def run():
+        code = 0
+        try:
+            t0 = time.time(); win.ai_server.start(); rep["start_s"] = round(time.time() - t0, 1)
+            for c in cases:
+                t0 = time.time()
+                raw = win.ai_server._post(win.ai_server._messages(c["text"], c["msg"]), 600)
+                p = ai.parse_answer(raw)
+                st = dict(p["settings"])
+                if not p["changes"] and not p["addon"] and extras.IMPERATIVE.search(c["msg"]):
+                    for k, v in ai.settings_hint(c["msg"]).items():
+                        st.setdefault(k, v)
+                new, n = ai.apply(c["text"], p["changes"])
+                exp = c["expect"]
+                if exp == "change":
+                    ok = n > 0 and (not c.get("find") or (c["find"] not in new and c["replace"] in new))
+                elif exp == "reply":
+                    ok = bool(p["reply"]) and not p["changes"] and (c.get("reply_has", "") in p["reply"])
+                elif exp == "settings":
+                    ok = all(k in st for k in c["keys"]) and not p["changes"]
+                elif exp == "addon":
+                    ok = bool(p["addon"])
+                else:
+                    ok = bool(p["too_big"])
+                want = c.get("lang", "he")
+                got = lang_of(p["reply"]) if p["reply"] else "none"
+                rec = {"name": c["name"], "msg": c["msg"], "expect": exp, "ok": bool(ok), "reply_lang": got,
+                       "lang_ok": got == want, "reply": p["reply"], "changes": p["changes"], "settings": st,
+                       "addon": p["addon"], "too_big": p["too_big"], "new_text": new, "seconds": round(time.time() - t0, 1),
+                       "raw": raw[:600]}
+                rep["cases"].append(rec)
+                log("ai chat test %s ok=%s lang=%s %.1fs" % (c["name"], ok, got, rec["seconds"]))
+            rep["passed"] = sum(1 for r in rep["cases"] if r["ok"])
+            rep["lang_ok"] = sum(1 for r in rep["cases"] if r["lang_ok"])
+            rep["total"] = len(rep["cases"])
+            if rep["passed"] < a.ai_chat_min:
+                code = 1
+        except Exception:
+            rep["error"] = traceback.format_exc(); code = 4
+        rep["code"] = code
+        with open(os.path.join(out, "report.json"), "w", encoding="utf-8") as f:
+            json.dump(rep, f, ensure_ascii=False, indent=1)
+        win.ai_server.close()
+        app.exit(code)
+    QTimer.singleShot(500, run)
+
+
 def ai_test(app, win, a):
     """Build-machine test of the AI helper.
     Model missing: the window opens, the AI button shows the one-time download offer (exit 0 with --ai-expect-missing).
@@ -2880,9 +3069,10 @@ def main():
     ap.add_argument("--update-test"); ap.add_argument("--click-test"); ap.add_argument("--link-test"); ap.add_argument("--report-after", type=float)
     ap.add_argument("--player-test"); ap.add_argument("--request-test"); ap.add_argument("--badge-test"); ap.add_argument("--expect", default="blue")
     ap.add_argument("--ai-test"); ap.add_argument("--ui-test", action="store_true"); ap.add_argument("--ai-expect-missing", action="store_true"); ap.add_argument("--ai-timeout", type=float, default=3600)
+    ap.add_argument("--ai-chat-test"); ap.add_argument("--ai-chat-min", type=int, default=0)
     a, _ = ap.parse_known_args()
     files = [f for f in a.files if os.path.isfile(f)]
-    test = bool(a.selftest or a.update_test is not None or a.click_test or a.link_test or a.player_test or a.request_test or a.ai_test or a.ui_test)
+    test = bool(a.selftest or a.update_test is not None or a.click_test or a.link_test or a.player_test or a.request_test or a.ai_test or a.ui_test or a.ai_chat_test)
     other = updater.hold_mutex()
     app = QApplication(sys.argv)
     app.setApplicationName(TITLE)
@@ -2916,6 +3106,8 @@ def main():
         request_test(app, win, a)
     elif a.ai_test:
         ai_test(app, win, a)
+    elif a.ai_chat_test:
+        ai_chat_test(app, win, a)
     elif a.ui_test:
         extras.ui_test(app, win, a)
     elif a.badge_test:

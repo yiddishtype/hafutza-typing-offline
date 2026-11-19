@@ -1,6 +1,12 @@
 **Hafutza Typing for Windows** - types up Yiddish (and Hebrew, English, Spanish, French) videos and recordings on your own computer, with no internet, and translates them to Yiddish, English, Hebrew, Spanish and French.
 
-Download **HafutzaTyping-Setup.exe** below and open it. (Have version 1.1, 1.2, 1.3, 1.3.1 or 1.4? Just press the program's **Update** button. Have version 1.0? Install this one over it. Your typed texts and the downloaded parts are kept.)
+Download **HafutzaTyping-Setup.exe** below and open it. (Have version 1.1, 1.2, 1.3, 1.3.1, 1.4 or 1.5? Just press the program's **Update** button. Have version 1.0? Install this one over it. Your typed texts and the downloaded parts are kept.)
+
+New in 1.6:
+- **The AI answers every message** you write in the chat and starts on it right away, with no internet.
+- **Chat in Hebrew**: write to the AI in Hebrew and it answers in Hebrew, shown right to left. Hebrew requests change the text or the program just like Yiddish or English ones.
+- **A link for any AI**: when the program's AI can't do something, it offers **Copy the link for any AI**. Paste it into any AI (ChatGPT, Claude, Gemini...). It holds your request and a link to the program's full code and a guide for that AI.
+- **Install an update another AI made**: a new box in the **Update** window. Paste the GitHub link that AI gives you. The program checks that it really is a copy of Hafutza Typing and that the file is in it, warns you that we did not make or check it, and installs it when you say yes. Your typed texts and downloaded parts are kept.
 
 New in 1.5:
 - **The AI ball**: a round **AI** ball on the side of the window. Click it and the AI opens as a **chat on the side** (about 4 inches wide); click it again to close it.

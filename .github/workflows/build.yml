@@ -7,7 +7,7 @@ on:
         default: ""
       version:
         description: "Program version"
-        default: "1.5"
+        default: "1.6"
       replace_v10:
         description: "Also put the new full installer at the v1.0 link the owner has (yes/no)"
         default: "yes"
@@ -41,7 +41,7 @@ jobs:
           pip uninstall -y onnxruntime
       - name: models that go into the installer (Yiddish speech) + small files of all
         run: |
-          gh release download models-v1 -p small-files.zip -p models.json -p yi-model.bin -D build\dl
+          gh release download models-v1 -R yiddishtype/hafutza-typing-offline -p small-files.zip -p models.json -p yi-model.bin -D build\dl
           Expand-Archive build\dl\small-files.zip build\models
           Move-Item build\dl\models.json build\models\
           Move-Item build\dl\yi-model.bin build\models\yi\model.bin
@@ -83,7 +83,7 @@ jobs:
           python tools/make_manifest.py Output\HafutzaTyping-Update.exe ${{ inputs.version }} "https://github.com/${{ github.repository }}/releases/download/${{ inputs.release || 'test' }}/HafutzaTyping-Update.exe" Output\update.json
       - name: like the owner's PC - install the published v1.0 and let it download the parts (3 GB) and type a clip
         run: |
-          gh release download v1.0 -p HafutzaTyping-Setup.exe -D C:\v10
+          gh release download v1.0 -R yiddishtype/hafutza-typing-offline -p HafutzaTyping-Setup.exe -D C:\v10
           $p = Start-Process -FilePath C:\v10\HafutzaTyping-Setup.exe -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -PassThru -Wait
           "v1.0 installer exit $($p.ExitCode)"
           Get-Content "$env:LOCALAPPDATA\Programs\Hafutza Typing\version.txt" -ErrorAction SilentlyContinue
@@ -216,6 +216,13 @@ jobs:
           Get-Content "$env:LOCALAPPDATA\HafutzaTyping\log.txt" | Select-String "ai " | Select-Object -Last 25
           Get-Content "$env:LOCALAPPDATA\HafutzaTyping\ai-log.txt" -ErrorAction SilentlyContinue | Select-Object -Last 15
           if ($p.ExitCode -ne 0) { "AI TEST FAILED"; exit 1 }
+      - name: test 13h - chat with the real AI in Hebrew (changes, questions, settings, add-on, too big)
+        run: |
+          $p = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" -ArgumentList '--ai-chat-test', "$pwd\tests\hebrew-chat.json", '--ai-chat-min', '9', '--out', 'C:\st\t13h' -PassThru
+          if (-not $p.WaitForExit(2400000)) { taskkill /PID $p.Id /T /F; "AI CHAT TEST HUNG"; exit 1 }
+          $env:PYTHONIOENCODING = "utf-8"
+          python -c "import json; r=json.load(open(r'C:\st\t13h\report.json',encoding='utf-8')); print('passed', r.get('passed'), 'of', r.get('total'), 'reply language right', r.get('lang_ok'), 'start', r.get('start_s'), r.get('error','')); [print(c['name'], 'OK' if c['ok'] else 'FAIL', c['reply_lang'], c['seconds'], 's |', c['reply'], '|', c['changes'], c['settings'], bool(c['addon']), c['too_big']) for c in r.get('cases',[])]"
+          if ($p.ExitCode -ne 0) { "AI CHAT TEST FAILED"; exit 1 }
       - name: update test A - Update button when this is the newest version
         run: python tools/update_e2e.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" http://127.0.0.1:8000/same.json newest C:\st\uA --serve C:\upd
       - name: update test B - a damaged download is refused and nothing changes
@@ -229,7 +236,7 @@ jobs:
           gh release view $r 2>$null
           if ($?) { gh release upload $r Output\HafutzaTyping-Setup.exe Output\HafutzaTyping-Update.exe Output\update.json --clobber }
           else { gh release create $r Output\HafutzaTyping-Setup.exe Output\HafutzaTyping-Update.exe Output\update.json --title "Hafutza Typing $r for Windows" --notes-file installer\release-notes.md }
-          if ("${{ inputs.replace_v10 }}" -eq "yes") {
+          if ("${{ inputs.replace_v10 }}" -eq "yes" -and "${{ github.repository }}" -eq "yiddishtype/hafutza-typing-offline") {
             gh release upload v1.0 Output\HafutzaTyping-Setup.exe --clobber
             gh release edit v1.0 --notes-file installer\release-notes.md --title "Hafutza Typing for Windows (this link always gives the newest version: now ${{ inputs.version }})"
           }
@@ -237,7 +244,7 @@ jobs:
           if ($?) { gh release upload updates Output\update.json --clobber }
           else { gh release create updates Output\update.json --prerelease --title "Update check (used by the program's Update button)" --notes "update.json: the newest version of Hafutza Typing for the Update button." }
       - name: update test D - the real thing - a program that says 1.0 asks GitHub, gets the published update, installs it
-        if: ${{ inputs.release != '' }}
+        if: ${{ inputs.release != '' && github.repository == 'yiddishtype/hafutza-typing-offline' }}
         run: |
           Set-Content -NoNewline -Encoding ascii "$env:LOCALAPPDATA\Programs\Hafutza Typing\version.txt" "1.0"
           python tools/update_e2e.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" real ${{ inputs.version }} C:\st\uD

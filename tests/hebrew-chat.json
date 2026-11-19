@@ -1,0 +1,16 @@
+[
+ {"name": "he-replace-yi", "text": "דער רבי האט געזאגט א מעשה פון זיין טאטע.", "msg": "תחליף את המילה טאטע ב-פאטער", "expect": "change", "find": "טאטע", "replace": "פאטער"},
+ {"name": "he-replace-en", "text": "We went to Bnei Brak on Sunday.", "msg": "שנה את Sunday ל-Monday", "expect": "change", "find": "Sunday", "replace": "Monday"},
+ {"name": "he-instead", "text": "דער רבי האט געזאגט א מעשה.", "msg": "במקום מעשה תכתוב סיפור", "expect": "change", "find": "מעשה", "replace": "סיפור"},
+ {"name": "he-question", "text": "דער רבי האט דערציילט א מעשה פון זיין טאטע, ווי ער איז געפארן קיין ירושלים.", "msg": "על מה מדבר הטקסט?", "expect": "reply"},
+ {"name": "he-question-en", "text": "We went to Bnei Brak on Sunday. It was a long trip.", "msg": "לאן הם נסעו ומתי?", "expect": "reply", "reply_has": "ברק"},
+ {"name": "he-shorten", "text": "We went to Bnei Brak on Sunday. It was a very very long and tiring trip for all of us.", "msg": "תקצר את המשפט השני", "expect": "change"},
+ {"name": "he-translate", "text": "דער רבי האט געזאגט א מעשה.", "msg": "תתרגם את המשפט לעברית", "expect": "change"},
+ {"name": "he-bigger", "text": "דער רבי האט געזאגט א מעשה.", "msg": "תגדיל את האותיות", "expect": "settings", "keys": ["font_size"]},
+ {"name": "he-colors", "text": "We went to Bnei Brak.", "msg": "תעשה את הכפתורים אדומים ואת התוכנה יותר כהה", "expect": "settings", "keys": ["button_color", "brightness"]},
+ {"name": "he-ai-left", "text": "We went to Bnei Brak.", "msg": "תשים את הבינה המלאכותית בצד שמאל", "expect": "settings", "keys": ["ai_side"]},
+ {"name": "he-addon", "text": "We went to Bnei Brak.", "msg": "תוסיף כפתור שמעתיק את כל הטקסט", "expect": "addon"},
+ {"name": "he-too-big", "text": "We went to Bnei Brak.", "msg": "תשלח לי את הטקסט בוואטסאפ כל ערב", "expect": "too_big"},
+ {"name": "yi-control", "text": "We went to Bnei Brak on Sunday.", "msg": "טוישט Sunday אויף Monday", "expect": "change", "find": "Sunday", "replace": "Monday", "lang": "yi"},
+ {"name": "en-control", "text": "דער רבי האט געזאגט א מעשה.", "msg": "what is this about?", "expect": "reply", "lang": "en"}
+]

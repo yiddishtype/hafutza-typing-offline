@@ -1,6 +1,15 @@
 """What each version added, in plain words (shown by the Update button, and written into update.json)."""
 
 NOTES = {
+    "1.6": [
+        "The AI answers every message you write in the chat and starts on it right away, with no internet.",
+        "Chat in Hebrew: write to the AI in Hebrew and it answers in Hebrew (shown right to left), "
+        "and Hebrew requests change the text or the program just like Yiddish or English ones.",
+        "When the AI can't do something, it gives you a link to copy (Copy the link for any AI). "
+        "Paste it into any AI (ChatGPT, Claude, Gemini...): it holds your request and the program's full code and guide.",
+        "New in the Update window: Install an update another AI made. Paste the GitHub link that AI gives you; "
+        "the program checks it really is a copy of Hafutza Typing, warns you, and installs it. Your texts are kept.",
+    ],
     "1.5": [
         "Faster: the AI now answers much quicker, also while a video is being typed (the typing waits a moment for it).",
         "New: the AI ball on the side of the window. Click it and the AI opens as a chat on the side; click again to close it.",

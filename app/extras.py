@@ -11,12 +11,13 @@ from PySide6.QtWidgets import (QApplication, QWidget, QDialog, QVBoxLayout, QHBo
                                QLabel, QPushButton, QToolButton, QMenu, QComboBox, QSpinBox, QSlider, QCheckBox,
                                QLineEdit, QPlainTextEdit, QGroupBox, QScrollArea, QFrame, QMessageBox, QSizePolicy)
 
-import prefs, addons, online, requests_out, ai, engine
+import prefs, addons, online, requests_out, ai, engine, handoff
 
 H = None                         # the hafutza module
 BALL_COLOR = "#6a3fd0"
 IMPERATIVE = re.compile(r"\b(make|set|change|put|move|turn|hide|show|use|switch|reset|give|let|can you|please|i want|"
-                        r"bigger|smaller|darker|brighter|louder|quieter)\b|מאך|שטעל|טויש|באהאלט|ווייז", re.I)
+                        r"bigger|smaller|darker|brighter|louder|quieter)\b|מאך|שטעל|טויש|באהאלט|ווייז|"
+                        r"תעשה|תעשי|תשנה|תשים|תגדיל|תקטין|תסתיר|תראה|תחליף|תזיז|תצבע|אני רוצה|בבקשה|תחזיר", re.I)
 
 
 def log(s):
@@ -511,8 +512,7 @@ def make_addon(chat, obj, reply, instr, by="AI"):
     win = chat.win
     clean, why = addons.check(obj)
     if why:
-        chat.bubble("bot", (reply + "\n" if reply else "") + both("I could not add that: %s." % why, "") +
-                    "\n" + both("You can send it to Avi, or ask a bigger online AI.", ""), help_buttons(chat, instr, by))
+        give_package(chat, instr, (reply + "\n" if reply else "") + both("I could not add that: %s." % why, ""), by)
         return None
     aid = addons.save(clean, by=by)
     refresh_addons(win)
@@ -524,17 +524,69 @@ def make_addon(chat, obj, reply, instr, by="AI"):
     return rec
 
 
-def help_buttons(chat, instr, by="AI"):
-    w = QWidget(); h = QHBoxLayout(w); h.setContentsMargins(0, 0, 0, 0)
-    b1 = QPushButton(both("Send to Avi", "שיקן צו אבי")); b1.setObjectName("toavi")
-    b1.clicked.connect(lambda _=False: send_to_avi(chat, instr, b1))
-    h.addWidget(b1)
+def package_folder():
+    return os.path.join(H.docs_dir(), "Hafutza Typing", "For any AI")
+
+
+def make_package(win, instr, reply=""):
+    """-> (text, path): the ready request for any other AI, also saved as a .txt file ("" if it could not be saved)."""
+    text = handoff.package(instr, H.VERSION, reply)
+    try:
+        path = handoff.save(text, package_folder(), instr)
+    except Exception as e:
+        log("package save: %r" % e)
+        path = ""
+    win.last_package = (text, path)
+    win.last_link = handoff.link_text(instr, H.VERSION)
+    log("package for any AI: %s" % (path or "(not saved)"))
+    return text, path
+
+
+def give_package(chat, instr, reply="", by="AI"):
+    """The AI could not do it here: hand him, in the chat, a ready request he can give ANY other AI (copy + saved file),
+    and a place to paste that AI's answer back. Send to Avi stays as a small extra."""
+    win = chat.win
+    text, path = make_package(win, instr, reply)
+    w = QWidget(); g = QGridLayout(w); g.setContentsMargins(0, 0, 0, 0); g.setSpacing(6)
+    link = win.last_link
+    cp = QPushButton("🔗 " + both("Copy the link for any AI", "קאפירן דעם לינק")); cp.setObjectName("pkg_copy")
+
+    def copy(_=False):
+        QApplication.clipboard().setText(link)
+        cp.setText("✓ " + both("Copied", "קאפירט"))
+        win.package_copied = True
+    cp.clicked.connect(copy)
+    g.addWidget(cp, 0, 0)
+    op = QPushButton(both("Open the full guide (file)", "עפענען די טעקע")); op.setObjectName("pkg_open")
+    op.setEnabled(bool(path))
+    op.clicked.connect(lambda _=False: None if win.quiet else QDesktopServices.openUrl(QUrl.fromLocalFile(path)))
+    g.addWidget(op, 0, 1)
     if by == "AI":
-        b2 = QPushButton(both("Ask a different AI", "פרעגן אן אנדערע AI")); b2.setObjectName("other")
-        b2.clicked.connect(lambda _=False: open_online(chat.win, instr))
-        h.addWidget(b2)
-    chat.win.last_help = w
+        pa = QPushButton(both("Paste its answer here", "אריינלייגן דעם ענטפער")); pa.setObjectName("other")
+        pa.clicked.connect(lambda _=False: open_online(win, instr))
+        g.addWidget(pa, 1, 0)
+    av = QPushButton(both("Or send to Avi (internet)", "אדער שיקן צו אבי")); av.setObjectName("toavi")
+    av.setFlat(True)
+    av.clicked.connect(lambda _=False: send_to_avi(chat, instr, av))
+    g.addWidget(av, 1, 1)
+    head = (reply.strip() + "\n\n") if reply.strip() else \
+        both("I can't do that here by myself, so here is a link for any other AI.",
+             "איך קען דאס נישט אליין, האב איך געמאכט א לינק פאר יעדן אנדערן AI") + "\n\n"
+    msg = head + both("Press “Copy the link”, paste it into any AI (ChatGPT, Claude, Gemini ...) and send. The link opens "
+                      "the program's code and a guide, so that AI can change the program and make you an update. "
+                      "When it gives you back a GitHub link, paste it in Update > “Install an update another AI made”.",
+                      "") + \
+        ("\n" + "Also saved as a file: " + path if path else "") + \
+        ("\n" + both("If that AI answers with a code in { }, press “Paste its answer here” and I'll apply it.", "")
+         if by == "AI" else "")
+    chat.bubble("bot", msg, w)
+    win.last_help = w
     return w
+
+
+def help_buttons(chat, instr, by="AI"):
+    """(Kept for older callers.) Same as give_package, without a bubble text of its own."""
+    return give_package(chat, instr, "", by)
 
 
 def send_to_avi(chat, instr, btn=None):
@@ -584,9 +636,8 @@ def apply_answer(chat, p, instr, by="AI", hint=False):
         reply = ""
     if addon:
         make_addon(chat, addon, reply, instr, by)
-    elif p.get("too_big") and not st:
-        chat.bubble("bot", (reply or both("That is more than I can build here.", "דאס קען איך נישט מאכן דא")) + "\n" +
-                    both("You can send it to Avi, or ask a bigger online AI.", ""), help_buttons(chat, instr, by))
+    elif p.get("too_big"):              # also after the part it could do (settings): the rest goes to any AI
+        give_package(chat, instr, reply, by)
     return True
 
 
@@ -928,9 +979,10 @@ class OnlineDialog(QDialog):
         r = self.request()
         if apply_answer(self, p, r, by="online AI"):
             return True
-        self.bubble("bot", (p.get("reply") + "\n" if p.get("reply") else "") +
-                    "The answer had no setting or add-on in it that the program can use.",
-                    help_buttons(self, r, "online AI"))
+        give_package(self, r, (p.get("reply") + "\n" if p.get("reply") else "") +
+                     "The answer had no setting or add-on in it that the program can use. If that AI changed the "
+                     "program's code instead, the new version comes with ⋮ > Check for update once it is published.",
+                     "online AI")
         return False
 
 
@@ -1125,12 +1177,80 @@ def ui_test(app, win, a):
         # 6. Something it can't build: plain reason, "Send to Avi" and "Ask a different AI"
         win.last_help = None
         handle(chat, ai.parse_answer(CANNED_BAD), "email me the text every morning", [])
-        ok["cant_build_offers_help"] = win.last_help is not None and \
-            {b.objectName() for b in win.last_help.findChildren(QPushButton)} == {"toavi", "other"}
+        names = {b.objectName() for b in win.last_help.findChildren(QPushButton)} if win.last_help is not None else set()
+        ok["cant_build_offers_help"] = names == {"pkg_copy", "pkg_open", "other", "toavi"}
+        pk = getattr(win, "last_package", None)
+        ptext = open(pk[1], encoding="utf-8-sig").read() if pk and pk[1] and os.path.exists(pk[1]) else ""
+        ok["package_file_saved"] = bool(ptext) and "email me the text every morning" in ptext and \
+            handoff.REPO in ptext and "app/extras.py" in ptext and "Run workflow" in ptext and \
+            os.path.dirname(pk[1]) == package_folder()
+        rep["notes"]["package_path"] = pk[1] if pk else ""
+        QApplication.clipboard().setText("")
+        cb = [b for b in win.last_help.findChildren(QPushButton) if b.objectName() == "pkg_copy"]
+        if cb:
+            cb[0].click()
+        ok["package_copy_button"] = QApplication.clipboard().text() == getattr(win, "last_link", None) and \
+            handoff.GUIDE in QApplication.clipboard().text() and \
+            "email me the text every morning" in QApplication.clipboard().text()
+        win.last_help = None
         handle(chat, ai.parse_answer('{"reply": "That needs the internet and a mail account.", "changes": [], "too_big": true}'),
                "email me the text every morning", [])
         ok["too_big_offers_help"] = win.last_help is not None
         shot("09-cant-build")
+        # part done, part not: the settings are applied AND he gets the package for the rest
+        win.last_help = None
+        before = prefs.load().get("font_size")
+        handle(chat, ai.parse_answer('{"reply": "I made the letters bigger. Sending email I can not build.", "changes": [], '
+                                     '"settings": {"font_size": 22}, "too_big": true}'),
+               "bigger letters and email me the text", [])
+        ok["partial_then_package"] = win.last_help is not None and prefs.load().get("font_size") == 22
+        rep["notes"]["partial_font_before"] = before
+        if win.undo_stack:
+            run_undo(win, win.undo_stack[-1])
+        ok["partial_undo"] = prefs.load().get("font_size") == before
+
+        # 6b. Hebrew answers show right-to-left; the Update window takes a link from another AI (checked first)
+        chat.bubble("bot", "שיניתי את הצבע של הכפתורים לכחול.\n2 שינויים נעשו.")
+        lbs = [l for l in chat.findChildren(QLabel) if hasattr(l, "rtl")]
+        ok["hebrew_bubble_rtl"] = bool(lbs) and lbs[-1].rtl and lbs[-1].text().startswith("\u200f") and \
+            "\n\u200f2" in lbs[-1].text()
+        import updater
+        ok["link_parse"] = updater.parse_link("https://github.com/someone/hafutza-typing-offline/releases/tag/v1.6.1") == \
+            ("someone/hafutza-typing-offline", "v1.6.1")
+        base = "https://github.com/someone/hafutza-typing-offline/releases/download/"
+
+        def fake(u, bad_url=False, other=False):
+            if u.endswith("/repos/someone/hafutza-typing-offline"):
+                return {"full_name": "someone/hafutza-typing-offline",
+                        "parent": {"full_name": "x/y" if other else updater.HOME_REPO}}
+            if u.endswith("/releases/latest"):
+                return {"tag_name": "v1.6.1"}
+            if u == base + "v1.6.1/update.json":
+                return {"version": "1.6.1", "sha256": "0" * 64, "size": 5,
+                        "url": ("https://example.com/x.exe" if bad_url else base + "v1.6.1/HafutzaTyping-Update.exe")}
+            raise OSError("404")
+
+        def refused(**kw):
+            try:
+                updater.from_link("https://github.com/someone/hafutza-typing-offline", lambda u: fake(u, **kw))
+                return False
+            except RuntimeError:
+                return True
+        good = updater.from_link("https://github.com/someone/hafutza-typing-offline", fake)
+        ok["link_checks"] = good["version"] == "1.6.1" and refused(other=True) and refused(bad_url=True)
+        ud = H.UpdateDialog(win, known={"version": H.VERSION, "url": "", "sha256": "", "size": 1, "newer": False})
+        QApplication.processEvents()
+        ud.link_in.setText("https://example.com/not-github")
+        ud.from_link(ask=False); ud.lchk.wait(); QApplication.processEvents()
+        bad_msg = "not a GitHub link" in ud.msg.text()
+        real_from, fetched = updater.from_link, []
+        updater.from_link = lambda link: dict(good)
+        ud.fetch = lambda: fetched.append(ud.m["version"])
+        ud.link_in.setText("https://github.com/someone/hafutza-typing-offline")
+        ud.from_link(ask=False); ud.lchk.wait(); QApplication.processEvents()
+        updater.from_link = real_from
+        ok["update_from_link"] = bad_msg and fetched == ["1.6.1"]
+        ud.close()
 
         # 7. Send to Avi: no internet -> kept; internet back -> sent by itself
         for f in (requests_out._file(),):

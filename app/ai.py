@@ -20,7 +20,7 @@ MODEL_SIZE = 2740937888
 MODEL_SHA = "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4"
 CTX = 6144
 
-SYS = ("You are the AI helper inside a Yiddish typing program. The user chats with you, in English or Yiddish, about "
+SYS = ("You are the AI helper inside a Yiddish typing program. The user chats with you, in English, Yiddish or Hebrew, about "
        "a typed text (Yiddish in Hebrew letters, or its English or other translation). Answer with ONLY a JSON object: "
        "{\"reply\": \"...\", \"changes\": [{\"find\": \"exact words now in the text\", \"replace\": \"new words\"}]}. "
        "When the user asks for a change to the text (change, fix, correct, spell, shorten, rewrite, translate a part ...), "
@@ -29,7 +29,11 @@ SYS = ("You are the AI helper inside a Yiddish typing program. The user chats wi
        "When the user only asks a question or chats, answer it in \"reply\" (short, in the user's language) and give "
        "\"changes\": []. "
        "The message may be in Yiddish even when the text is English: \"טוישט X אויף Y\", \"בייט X צו Y\", "
-       "\"מאך X Y\", \"שרייב Y אנשטאט X\" all mean: change X to Y. Copy X and Y exactly as the user wrote them. "
+       "\"מאך X Y\", \"שרייב Y אנשטאט X\" all mean: change X to Y. Copy X and Y exactly as the user wrote them.  "
+       "The message may also be in Hebrew: \"תחליף X ב-Y\", \"שנה את X ל-Y\", \"במקום X תכתוב Y\", \"תקן X ל-Y\" "
+       "all mean: change X to Y (leave out the little ב- or ל- in front of Y). Write \"reply\" in the language of the "
+       "MESSAGE: Hebrew when the message is Hebrew (words like את, של, תשנה, אני, זה), Yiddish when it is Yiddish, "
+       "English when it is English. "
        "When the user asks to change how the PROGRAM looks, sounds or is laid out, do not change the text: give "
        "\"changes\": [] and add \"settings\" with only what was asked. Settings: font_size (\"+2\", \"-2\" or 9-36, the "
        "letters of the text), font (a font name), brightness (\"-20\" or 40-100), volume (\"+20\" or 0-100), theme (light "
@@ -48,8 +52,9 @@ SYS = ("You are the AI helper inside a Yiddish typing program. The user chats wi
        "open_folder, settings (value: settings as above), open (value: settings, ai, videos, learned, update or addons), "
        "tab (value: yi en he ...), message (value: words to show). "
        "When the user asks for something none of this can do (a new feature, the internet, changing the program's code, "
-       "anything not listed), give \"changes\": [], add \"too_big\": true and say in \"reply\" that you can't build that "
-       "yourself, and that he can press Send to Avi or Ask a different AI.")
+       "anything not listed), do every part you CAN do (changes, settings or addon) and add \"too_big\": true for the rest; say in "
+       "\"reply\" in one short sentence what you did and that the rest you can't build yourself, so you are giving him a "
+       "ready request for any other AI.")
 
 # Short worked examples shown to the AI before the real question (a small model follows examples best).
 SHOTS = [
@@ -72,8 +77,15 @@ SHOTS = [
     ("TEXT:\nWe went to Bnei Brak.\n\nMESSAGE: add a button Translate that turns the text into English",
      '{"reply": "Added a Translate button at the top.", "changes": [], "addon": {"name": "Translate", "kind": "button", '
      '"label": "Translate", "steps": [{"do": "ai", "value": "translate the whole text into English"}]}}'),
+    ("TEXT:\nדער רבי האט געזאגט א מעשה פון זיין טאטן.\n\nMESSAGE: תחליף את המילה טאטן ב-פאטער",
+     '{"reply": "החלפתי את טאטן ב-פאטער.", "changes": [{"find": "טאטן", "replace": "פאטער"}]}'),
+    ("TEXT:\nWe went to Bnei Brak on Sunday.\n\nMESSAGE: על מה מדובר בטקסט?",
+     '{"reply": "הטקסט מספר שהם נסעו לבני ברק ביום ראשון.", "changes": []}'),
+    ("TEXT:\nWe went to Bnei Brak.\n\nMESSAGE: תגדיל את האותיות ותעשה את הכפתורים כחולים",
+     '{"reply": "הגדלתי את האותיות וצבעתי את הכפתורים בכחול.", "changes": [], '
+     '"settings": {"font_size": "+2", "button_color": "blue"}}'),
     ("TEXT:\nWe went to Bnei Brak.\n\nMESSAGE: make it send the text to my WhatsApp every night",
-     '{"reply": "I can\'t build that myself: it needs a new feature. Press Send to Avi, or Ask a different AI.", '
+     '{"reply": "I can\'t build that myself: it needs a new feature. Here is a ready request for any other AI.", '
      '"changes": [], "too_big": true}'),
 ]
 
@@ -422,28 +434,32 @@ def parse_answer(out):
             "too_big": obj.get("too_big") in (True, "true", "yes", 1)}
 
 
-# words that ask for a setting, when the AI itself left "settings" out (English and Yiddish)
+# words that ask for a setting, when the AI itself left "settings" out (English, Yiddish and Hebrew)
 _SET_WORDS = [
-    ("font_size", "+2", r"\b(bigger|larger|enlarge|increase (the )?(font|letters|text))\b|גרעסער|גרויסער"),
-    ("font_size", "-2", r"\b(smaller|tinier|decrease (the )?(font|letters|text))\b|קלענער"),
-    ("brightness", "-20", r"\b(darker|dimmer|dim)\b|טונקעלער|פינצטערער"),
-    ("brightness", "+20", r"\b(brighter|lighter)\b|העלער|ליכטיקער"),
-    ("volume", "+20", r"\b(louder|volume up|turn up)\b|העכער|הויכער"),
-    ("volume", "-20", r"\b(quieter|softer|volume down|turn down)\b|שטילער|נידעריקער"),
-    ("theme", "dark", r"\bdark (mode|theme)\b|\bnight mode\b"),
-    ("theme", "light", r"\blight (mode|theme)\b|\bday mode\b"),
-    ("reset", True, r"\b(reset|back to normal|as it was at first)\b"),
+    ("font_size", "+2", r"\b(bigger|larger|enlarge|increase (the )?(font|letters|text))\b|גרעסער|גרויסער|תגדיל|להגדיל|הגדל|יותר גדול|גדולות יותר|גדולים יותר"),
+    ("font_size", "-2", r"\b(smaller|tinier|decrease (the )?(font|letters|text))\b|קלענער|תקטין|להקטין|הקטן|יותר קטן|קטנות יותר|קטנים יותר"),
+    ("brightness", "-20", r"\b(darker|dimmer|dim)\b|טונקעלער|פינצטערער|יותר כהה|כהה יותר|תחשיך|חשוך יותר"),
+    ("brightness", "+20", r"\b(brighter|lighter)\b|העלער|ליכטיקער|יותר בהיר|בהיר יותר|תבהיר"),
+    ("volume", "+20", r"\b(louder|volume up|turn up)\b|העכער|הויכער|יותר חזק|חזק יותר|תגביר"),
+    ("volume", "-20", r"\b(quieter|softer|volume down|turn down)\b|שטילער|נידעריקער|יותר שקט|שקט יותר|תנמיך"),
+    ("theme", "dark", r"\bdark (mode|theme)\b|\bnight mode\b|מצב כהה|מצב לילה"),
+    ("theme", "light", r"\blight (mode|theme)\b|\bday mode\b|מצב בהיר|מצב יום"),
+    ("reset", True, r"\b(reset|back to normal|as it was at first)\b|תחזיר הכל|כמו שהיה|לאפס"),
 ]
 _COLOR_RX = (r"\b(blue|red|green|yellow|orange|purple|pink|gray|grey|black|white|brown|gold|navy|teal|"
              r"dark ?blue|dark ?green|light ?blue)\b")
+
+
+_HE_COLORS = {"כחול": "blue", "אדום": "red", "ירוק": "green", "צהוב": "yellow", "כתום": "orange", "סגול": "purple",
+              "ורוד": "pink", "אפור": "gray", "שחור": "black", "לבן": "white", "חום": "brown", "זהב": "gold"}
 
 
 def settings_hint(message, fonts=()):
     """Settings asked for in plain words (a safety net under the AI): -> dict like parse_settings."""
     low = (message or "").lower()
     st = {}
-    buttons = re.search(r"\bbuttons?\b|קנעפ", low)
-    letters = re.search(r"\b(letters?|font|text|words?)\b|אותיות|בוכשטאבן", low)
+    buttons = re.search(r"\bbuttons?\b|קנעפ|כפתור", low)
+    letters = re.search(r"\b(letters?|font|text|words?)\b|אותיות|בוכשטאבן|גופן|פונט|טקסט", low)
     for key, val, rx in _SET_WORDS:
         if key.startswith("font_size") and buttons and not letters:
             key = "button_size"; val = "+30" if val == "+2" else "-20"
@@ -454,6 +470,14 @@ def settings_hint(message, fonts=()):
                       _COLOR_RX, low)
         if c:
             st["button_color"] = next(g for g in c.groups() if g)
+        if "button_color" not in st:
+            for he, en in _HE_COLORS.items():
+                if he in low:
+                    st["button_color"] = en
+                    break
+    m2 = re.search(r"(כפתור ה)?(בינה המלאכותית|הבינה|ai|AI)[^.]*?(שמאל|ימין)", message or "")
+    if m2:
+        st["ai_button_pos" if m2.group(1) else "ai_side"] = "left" if m2.group(3) == "שמאל" else "right"
     m = re.search(r"\bai( button)?\b[^.]*?\b(left|right)\b", low)
     if m:
         st["ai_button_pos" if m.group(1) else "ai_side"] = m.group(2)

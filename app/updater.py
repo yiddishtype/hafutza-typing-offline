@@ -6,12 +6,12 @@
   (same AppId), keeps the downloaded parts in the program's models folder, LOCALAPPDATA\\HafutzaTyping and Documents,
   waits for this program to close, and opens it again.
 """
-import hashlib, json, os, subprocess, sys, tempfile, time, urllib.request
+import hashlib, json, os, re, subprocess, sys, tempfile, time, urllib.parse, urllib.request
 
 import engine
 from engine import log
 
-FALLBACK_VERSION = "1.5"
+FALLBACK_VERSION = "1.6"
 MANIFEST_URL = "https://github.com/yiddishtype/hafutza-typing-offline/releases/download/updates/update.json"
 MUTEX = "HafutzaTypingRunning"      # the installer waits until no program holds this
 _mutex = None
@@ -61,6 +61,83 @@ def check(url=None, timeout=20):
             raise RuntimeError("update.json has no %s" % k)
     m["newer"] = newer(m["version"], version())
     log("update check: here %s, newest %s, newer=%s" % (version(), m["version"], m["newer"]))
+    return m
+
+
+HOME_REPO = "yiddishtype/hafutza-typing-offline"
+
+
+def parse_link(link):
+    """A link to a GitHub copy (fork) of this program, or to one of its releases. -> (owner/repo, tag or None).
+    Raises ValueError for anything that is not a github.com repo link."""
+    t = (link or "").strip().strip("<>\"' ")
+    m = re.match(r"^(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?(?:/(.*))?$", t)
+    if not m:
+        raise ValueError("That is not a GitHub link. It should start with https://github.com/")
+    repo = "%s/%s" % (m.group(1), m.group(2))
+    rest = (m.group(3) or "").split("?")[0].split("#")[0].strip("/")
+    tag = None
+    mm = re.match(r"^releases/(?:tag|download)/([^/]+)", rest)
+    if mm:
+        tag = urllib.parse.unquote(mm.group(1))
+    if tag and not re.match(r"^[A-Za-z0-9_.-]+$", tag):
+        raise ValueError("That release name looks wrong.")
+    return repo, tag
+
+
+def _get_json(url, timeout=20):
+    req = urllib.request.Request(url, headers={"User-Agent": "HafutzaTyping/" + version(),
+                                               "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8-sig"))
+
+
+def repo_ok(info):
+    """True if this GitHub repo is the program itself or a copy (fork) made from it."""
+    names = [(info.get("full_name") or "")]
+    for k in ("parent", "source"):
+        if isinstance(info.get(k), dict):
+            names.append(info[k].get("full_name") or "")
+    return any(n.lower() == HOME_REPO.lower() for n in names)
+
+
+def from_link(link, get_json=None, timeout=20):
+    """Install an update another AI made: the link is its copy (fork) of the program on GitHub, or a release there.
+    Checks the copy really comes from this program, reads its update.json and checks the file is in that copy.
+    -> the update.json dict, with 'repo' and 'newer'. Raises with a plain message."""
+    get_json = get_json or (lambda u: _get_json(u, timeout))
+    repo, tag = parse_link(link)
+    try:
+        info = get_json("https://api.github.com/repos/" + repo)
+    except Exception as e:
+        raise RuntimeError("Could not open that link on GitHub (%s). Is the internet on, and is the link right?"
+                           % type(e).__name__)
+    if not repo_ok(info):
+        raise RuntimeError("That link is not a copy of Hafutza Typing, so it was not installed.")
+    if not tag:
+        try:
+            tag = (get_json("https://api.github.com/repos/%s/releases/latest" % repo) or {}).get("tag_name")
+        except Exception:
+            tag = None
+    base = "https://github.com/%s/releases/download/" % repo
+    m = None
+    for t in [x for x in (tag, "updates") if x]:
+        try:
+            m = get_json(base + t + "/update.json")
+            break
+        except Exception:
+            continue
+    if not isinstance(m, dict):
+        raise RuntimeError("That copy has no finished update yet (no update.json in its release). "
+                           "Ask the other AI to run the build with a version number.")
+    for k in ("version", "url", "sha256", "size"):
+        if k not in m:
+            raise RuntimeError("Its update.json has no %s." % k)
+    if not str(m["url"]).startswith(base):
+        raise RuntimeError("Its update file is not stored in that copy, so it was not installed.")
+    m["repo"] = repo
+    m["newer"] = newer(m["version"], version())
+    log("update from link: %s %s -> %s" % (repo, tag, m["version"]))
     return m
 
 
