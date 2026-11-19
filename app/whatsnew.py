@@ -1,6 +1,12 @@
 """What each version added, in plain words (shown by the Update button, and written into update.json)."""
 
 NOTES = {
+    "1.5": [
+        "Faster: the AI now answers much quicker, also while a video is being typed (the typing waits a moment for it).",
+        "TYPING_LINE",
+        "One download: after installing, the program downloads everything it needs once, the AI included, "
+        "with one progress bar. Then it all works with no internet.",
+    ],
     "1.4": [
         "New: AI: fix words (button at the top). Write what to fix, in Yiddish or English, like: change X to Y. "
         "The AI shows the changes; nothing changes until you press OK.",

@@ -978,7 +978,7 @@ class AIDialog(QDialog):
             if gb and gb < 7.5:
                 warn = ("\nThis computer has %.0f GB of memory; the AI needs about 5 GB, so it may be slow or not start "
                         "while typing runs." % gb)
-            self.status.setText(both("The AI is not downloaded yet. It is an extra 2.7 GB, downloaded once; after that it "
+            self.status.setText(both("The AI is not downloaded yet (2.7 GB, one time; it normally comes with the first download). After that it "
                                      "works with no internet. The rest of the program works without it." + warn,
                                      "דער AI איז נאך נישט אראפגענומען (2.7 GB, איין מאל)"))
         elif self.lang.count() == 0:

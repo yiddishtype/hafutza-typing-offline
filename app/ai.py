@@ -106,7 +106,7 @@ def download(progress, stop):
             os.remove(part); have = 0
         if have < total:
             try:
-                req = urllib.request.Request(MODEL_URL, headers={"User-Agent": "HafutzaTyping/1.4",
+                req = urllib.request.Request(MODEL_URL, headers={"User-Agent": "HafutzaTyping/1.5",
                                                                  **({"Range": "bytes=%d-" % have} if have else {})})
                 r = urllib.request.urlopen(req, timeout=60)
                 if have and r.status != 206:
