@@ -1,6 +1,12 @@
 """What each version added, in plain words (shown by the Update button, and written into update.json)."""
 
 NOTES = {
+    "1.4": [
+        "New: AI: fix words (button at the top). Write what to fix, in Yiddish or English, like: change X to Y. "
+        "The AI shows the changes; nothing changes until you press OK.",
+        "It works while a video is still being typed: the lines still to come get the fix too. No internet needed.",
+        "The AI is a separate one-time download (2.7 GB) and needs about 8 GB of memory. The rest works without it.",
+    ],
     "1.3.1": [
         "Facebook video links now come with the picture, not only the sound.",
     ],

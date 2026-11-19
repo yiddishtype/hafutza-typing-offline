@@ -11,7 +11,7 @@ import hashlib, json, os, subprocess, sys, tempfile, time, urllib.request
 import engine
 from engine import log
 
-FALLBACK_VERSION = "1.3.1"
+FALLBACK_VERSION = "1.4"
 MANIFEST_URL = "https://github.com/yiddishtype/hafutza-typing-offline/releases/download/updates/update.json"
 MUTEX = "HafutzaTypingRunning"      # the installer waits until no program holds this
 _mutex = None

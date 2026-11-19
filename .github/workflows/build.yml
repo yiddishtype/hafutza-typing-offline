@@ -7,7 +7,7 @@ on:
         default: ""
       version:
         description: "Program version"
-        default: "1.3.1"
+        default: "1.4"
       replace_v10:
         description: "Also put the new full installer at the v1.0 link the owner has (yes/no)"
         default: "yes"
@@ -19,7 +19,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 150
+    timeout-minutes: 240
     env:
       GH_TOKEN: ${{ github.token }}
       PYTHONUTF8: "1"
@@ -58,6 +58,11 @@ jobs:
           Copy-Item -Recurse build\models dist\HafutzaTyping\models
           Copy-Item build\hafutza.ico dist\HafutzaTyping\
           Set-Content -NoNewline -Encoding ascii dist\HafutzaTyping\version.txt "${{ inputs.version }}"
+          curl.exe -sSL -o build\llama.zip https://github.com/ggml-org/llama.cpp/releases/download/b12503/llama-b12503-bin-win-cpu-x64.zip
+          if ($LASTEXITCODE) { "llama.cpp download failed"; exit 1 }
+          Expand-Archive build\llama.zip dist\HafutzaTyping\llama
+          if (-not (Test-Path dist\HafutzaTyping\llama\llama-server.exe)) { "llama-server.exe missing"; Get-ChildItem -Recurse dist\HafutzaTyping\llama | Select-Object -First 30; exit 1 }
+          "AI part (llama.cpp): {0:N0} MB" -f ((Get-ChildItem -Recurse dist\HafutzaTyping\llama | Measure-Object Length -Sum).Sum / 1MB)
           "video player parts:"; Get-ChildItem -Recurse dist\HafutzaTyping -Include *multimedia*,av*.dll,swscale*.dll,swresample*.dll,*ffmpeg* | Format-Table Length,FullName
           "{0:N0} MB" -f ((Get-ChildItem -Recurse dist\HafutzaTyping | Measure-Object Length -Sum).Sum / 1MB)
       - name: installers (full + update-only) and a test "VERSION.9" update (newer than this build)
@@ -173,6 +178,28 @@ jobs:
           Get-Content C:\st\t8\report.json
           Get-Content "$env:LOCALAPPDATA\HafutzaTyping\log.txt" | Select-String "link" | Select-Object -Last 12
           python -c "import json; r=json.load(open(r'C:\st\t8\report.json',encoding='utf-8')); print('PICTURES:', [(f['name'], f.get('picture')) for f in r['files']])"
+      - name: test 13a - AI helper with the AI not downloaded - the button offers the one-time download, typing still works
+        run: |
+          $p = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" -ArgumentList '--ai-test', "$pwd\tests\clip30.mp3", '--ai-expect-missing', '--spoken', 'yi', '--targets', 'yi', '--out', 'C:\st\t13a', '--ai-timeout', '1200' -PassThru
+          if (-not $p.WaitForExit(1500000)) { taskkill /PID $p.Id /T /F; "AI TEST (missing) HUNG"; exit 1 }
+          Get-Content C:\st\t13a\report.json
+          if ($p.ExitCode -ne 0) { "AI TEST (missing model) FAILED"; exit 1 }
+      - name: test 13 - AI helper - download the AI (2.7 GB), then fix words while typing 13.8 min of Yiddish (and in the English after)
+        run: |
+          $d = "$env:LOCALAPPDATA\HafutzaTyping\models\ai"
+          New-Item -ItemType Directory -Force $d | Out-Null
+          $t = Get-Date
+          curl.exe -sSL --retry 5 -o "$d\Qwen3.5-4B-Q4_K_M.gguf.part" "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-Q4_K_M.gguf"
+          $h = (Get-FileHash "$d\Qwen3.5-4B-Q4_K_M.gguf.part" -Algorithm SHA256).Hash.ToLower()
+          "model download $([int]((Get-Date) - $t).TotalSeconds) s, sha256 $h"
+          if ($h -ne "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4") { "MODEL DOWNLOAD BAD"; exit 1 }
+          Move-Item "$d\Qwen3.5-4B-Q4_K_M.gguf.part" "$d\Qwen3.5-4B-Q4_K_M.gguf"
+          $p = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" -ArgumentList '--ai-test', "$pwd\tests\long.mp3", '--spoken', 'yi', '--targets', 'yi,en', '--out', 'C:\st\t13', '--ai-timeout', '4200' -PassThru
+          if (-not $p.WaitForExit(4500000)) { taskkill /PID $p.Id /T /F; "AI TEST HUNG"; exit 1 }
+          Get-Content C:\st\t13\report.json
+          Get-Content "$env:LOCALAPPDATA\HafutzaTyping\log.txt" | Select-String "ai " | Select-Object -Last 25
+          Get-Content "$env:LOCALAPPDATA\HafutzaTyping\ai-log.txt" -ErrorAction SilentlyContinue | Select-Object -Last 15
+          if ($p.ExitCode -ne 0) { "AI TEST FAILED"; exit 1 }
       - name: update test A - Update button when this is the newest version
         run: python tools/update_e2e.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" http://127.0.0.1:8000/same.json newest C:\st\uA --serve C:\upd
       - name: update test B - a damaged download is refused and nothing changes

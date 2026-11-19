@@ -51,6 +51,7 @@ try:
     import project
     import whatsnew
     import requests_out
+    import ai
     from engine import LANGS, NAME_YI, NAME_EN, log
 except Exception:
     _excepthook(*sys.exc_info())
@@ -116,9 +117,13 @@ class Job(QThread):
     result = Signal(str, str)
     done = Signal(bool, str)
 
-    def __init__(self, path, spoken, targets):
+    def __init__(self, path, spoken, targets, rules=None):
         super().__init__()
         self.path, self.spoken, self.targets = path, spoken, targets
+        self.rules = rules if rules is not None else {}     # lang -> [(find, replace)] from the AI helper, while typing
+        self.applied = {}       # lang -> how many of rules[lang] are already in self.texts[lang]
+        self.emitted = {}       # lang -> how many were in the text when it was sent to the window
+        self.made = None        # lang -> how many were in the saved timings file
         self._stop = False
         self.times = {}
         self.docs = docs_dir()
@@ -126,6 +131,19 @@ class Job(QThread):
 
     def stop(self):
         self._stop = True
+
+    def fix_ai(self, lang, lines):
+        allr = list(self.rules.get(lang, []))
+        rules = allr[self.applied.get(lang, 0):]
+        self.applied[lang] = len(allr)
+        if not rules:
+            return lines
+        out, n = [], 0
+        for l in lines:
+            l, k = ai.apply(l, rules)
+            out.append(l); n += k
+        self.times["ai_fixes_" + lang] = self.times.get("ai_fixes_" + lang, 0) + n
+        return out
 
     def run(self):
         stop = lambda: self._stop
@@ -173,10 +191,12 @@ class Job(QThread):
             except Exception as e:
                 log("learned fixes not done: %r" % e)
             self.times["learned_fixes_typing"] = fixed
+            lines = self.fix_ai(self.spoken, lines)
             self.segments = [(s, e) for s, e, _t in segs]
             self.texts = {self.spoken: lines}
             text = "\n".join(lines)
             if self.spoken in self.targets:
+                self.emitted[self.spoken] = self.applied.get(self.spoken, 0)
                 self.result.emit(self.spoken, text)
             others = [t for t in self.targets if t != self.spoken]
             if others:
@@ -202,14 +222,19 @@ class Job(QThread):
                         except Exception as e:
                             log("learned translation fixes not done: %r" % e)
                         self.times["learned_fixes_" + tgt] = n
+                        tl = self.fix_ai(tgt, tl)
                         self.texts[tgt] = tl
+                        self.emitted[tgt] = self.applied.get(tgt, 0)
                         self.result.emit(tgt, "\n".join(tl))
                         self.times["translate_" + tgt] = time.time() - t2
                 finally:
                     tr.close()
+            for l in list(self.texts):  # AI fixes he pressed OK on while this was running
+                self.texts[l] = self.fix_ai(l, self.texts[l])
             try:                    # keep the timings, for watching the video with its text and fixing it
                 proj = project.make(self.path, self.spoken, self.targets, self.segments, self.texts)
                 project.save(proj)
+                self.made = {l: self.applied.get(l, 0) for l in self.texts}
                 project.export(proj, self.docs)
                 self.times["project"] = len(proj["segments"])
             except Exception as e:
@@ -784,6 +809,293 @@ def hms(t):
     return "%d:%02d hours" % (t // 3600, t // 60 % 60)
 
 
+# ------------------------------------------------------------------ the AI helper (fix words on request)
+class AIFetch(QThread):
+    progress = Signal(float, float)
+    done = Signal(bool, str)
+
+    def __init__(self):
+        super().__init__()
+        self._stop = False
+
+    def stop(self):
+        self._stop = True
+
+    def run(self):
+        try:
+            mark = [0]
+
+            def prog(d, t):
+                self.progress.emit(d, t)
+                if d / t >= mark[0] + 0.1:
+                    mark[0] += 0.1
+                    log("ai download %.0f%%" % (100 * d / t))
+            ai.download(prog, lambda: self._stop)
+            log("ai model downloaded")
+            self.done.emit(True, "")
+        except engine.Stopped:
+            self.done.emit(False, "stopped")
+        except Exception as e:
+            log("ai download failed: " + traceback.format_exc())
+            self.done.emit(False, str(e))
+
+
+class AIAsk(QThread):
+    """One question to the AI, in the background. instruction None = only start the AI (warm it up)."""
+    done = Signal(object, str, str, float)     # changes [(find, replace)], raw answer, error, seconds
+
+    def __init__(self, server, text, instruction):
+        super().__init__()
+        self.server, self.text, self.instruction = server, text, instruction
+
+    def run(self):
+        t = time.time()
+        try:
+            if self.instruction is None:
+                self.server.start()
+                self.done.emit([], "", "", time.time() - t)
+                return
+            ch, raw = self.server.ask(ai.context(self.text, self.instruction), self.instruction)
+            log("ai answer %.1f s: %s" % (time.time() - t, raw[:500].replace("\n", " ")))
+            self.done.emit(ch, raw, "", time.time() - t)
+        except Exception as e:
+            log("ai failed: " + traceback.format_exc())
+            self.done.emit([], "", str(e), time.time() - t)
+
+
+class AIDialog(QDialog):
+    """Write what to fix (English or Yiddish); the AI suggests word changes; tick them and press OK.
+    Not modal: the typing goes on while it is open. Nothing changes in the text without OK."""
+
+    def __init__(self, win):
+        super().__init__(win)
+        self.win, self.th, self.fetch, self.kb, self.changes, self.boxes = win, None, None, None, [], []
+        self.setWindowTitle(TITLE + " - AI: fix words")
+        self.setMinimumWidth(720)
+        self.setModal(False)
+        lay = QVBoxLayout(self)
+        t = QLabel(both("Write what to fix, in Yiddish or English. For example: change אמונה to עמונה,  or: write Reb not Rabbi.\n"
+                        "The AI shows the changes; nothing changes until you press OK. It works on this computer, no internet.",
+                        "שרייבט וואס צו פארריכטן, אויף אידיש אדער ענגליש. דער AI ווייזט די ענדערונגען; גארנישט טוישט זיך ביז איר דרוקט OK."))
+        t.setWordWrap(True)
+        lay.addWidget(t)
+        prow = QHBoxLayout()
+        prow.addWidget(QLabel("Fix the text in:  -  פארריכטן דעם טעקסט אין:"))
+        self.lang = QComboBox(); self.lang.setMinimumHeight(40)
+        prow.addWidget(self.lang, 1)
+        lay.addLayout(prow)
+        self.log = QPlainTextEdit(); self.log.setReadOnly(True); self.log.setMinimumHeight(110)
+        lay.addWidget(self.log)
+        self.box = QPlainTextEdit(); self.box.setMaximumHeight(90)
+        f = self.box.font(); f.setPointSize(15); self.box.setFont(f)
+        lay.addWidget(self.box)
+        krow = QHBoxLayout()
+        self.kb_btn = QPushButton(both("Show the Yiddish keyboard", "אידישע קלאוויאטור"))
+        self.kb_btn.clicked.connect(self.toggle_kb)
+        self.send_btn = QPushButton(both("Ask the AI", "פרעגן דעם AI")); self.send_btn.setObjectName("start")
+        self.send_btn.clicked.connect(self.send)
+        krow.addWidget(self.kb_btn, 1); krow.addWidget(self.send_btn, 2)
+        lay.addLayout(krow)
+        self.kb_spot = QVBoxLayout(); lay.addLayout(self.kb_spot)
+        self.status = QLabel(""); self.status.setWordWrap(True)
+        lay.addWidget(self.status)
+        self.bar = QProgressBar(); self.bar.setRange(0, 1000); self.bar.hide()
+        lay.addWidget(self.bar)
+        self.list_box = QGroupBox("Suggested changes  -  פארגעשלאגענע ענדערונגען")
+        self.list_lay = QVBoxLayout(self.list_box)
+        self.list_box.hide()
+        lay.addWidget(self.list_box)
+        self.remember = QCheckBox(both("Also remember these for the next videos (Learned words)", "געדענקען אויך פאר די קומענדיגע ווידעאס"))
+        self.remember.hide()
+        lay.addWidget(self.remember)
+        brow = QHBoxLayout()
+        self.ok_btn = QPushButton("OK  -  פארריכטן"); self.ok_btn.setObjectName("start")
+        self.ok_btn.clicked.connect(self.apply)
+        self.no_btn = QPushButton(both("Don't change", "נישט טוישן"))
+        self.no_btn.clicked.connect(self.clear_changes)
+        self.ok_btn.hide(); self.no_btn.hide()
+        brow.addWidget(self.ok_btn, 2); brow.addWidget(self.no_btn, 1)
+        lay.addLayout(brow)
+        self.dl_btn = QPushButton(both("Download the AI (2.7 GB, one time)", "אראפנעמען דעם AI (2.7 GB, איין מאל)"))
+        self.dl_btn.setObjectName("choose")
+        self.dl_btn.clicked.connect(self.download)
+        lay.addWidget(self.dl_btn)
+        self.close_btn = QPushButton(both("Close", "צומאכן"))
+        self.close_btn.clicked.connect(self.close)
+        lay.addWidget(self.close_btn)
+        self.refresh()
+
+    # -- what is there
+    def refresh(self):
+        langs = self.win.ai_langs()
+        if langs != [self.lang.itemData(i) for i in range(self.lang.count())]:
+            cur = self.lang.currentData()
+            self.lang.blockSignals(True)
+            self.lang.clear()
+            for l in langs:
+                self.lang.addItem("%s  %s" % (NAME_YI[l], NAME_EN[l]) if l != "en" else "English", l)
+            i = self.lang.findData(cur)
+            self.lang.setCurrentIndex(i if i >= 0 else 0)
+            self.lang.blockSignals(False)
+        have = ai.model_file() is not None
+        exe = ai.server_exe() is not None
+        self.dl_btn.setVisible(not have and exe and self.fetch is None)
+        self.send_btn.setEnabled(have and exe and self.th is None and self.lang.count() > 0)
+        was = getattr(self, "problem", False)
+        self.problem = True
+        if not exe:
+            self.status.setText(both("The AI part is missing from this copy of the program: please install it again.",
+                                     "דער AI טייל פעלט: ביטע אינסטאלירט נאכאמאל"))
+        elif not have and self.fetch is None:
+            gb = ai.ram_gb()
+            warn = ""
+            if gb and gb < 7.5:
+                warn = ("\nThis computer has %.0f GB of memory; the AI needs about 5 GB, so it may be slow or not start "
+                        "while typing runs." % gb)
+            self.status.setText(both("The AI is not downloaded yet. It is an extra 2.7 GB, downloaded once; after that it "
+                                     "works with no internet. The rest of the program works without it." + warn,
+                                     "דער AI איז נאך נישט אראפגענומען (2.7 GB, איין מאל)"))
+        elif self.lang.count() == 0:
+            self.status.setText(both("There is no text yet. Type a video first (or wait for the first lines).",
+                                     "נאך קיין טעקסט נישטא"))
+        else:
+            self.problem = False
+            if was:
+                self.status.setText("")
+
+    def toggle_kb(self):
+        if self.kb is None:
+            import player
+            self.kb = player.Keyboard()
+            self.kb.typed.connect(lambda c: (self.box.insertPlainText(c), self.box.setFocus()))
+            self.kb.back.connect(lambda: self.box.textCursor().deletePreviousChar())
+            self.kb_spot.addWidget(self.kb)
+            self.kb_btn.setText(both("Hide the keyboard", "באהאלטן די קלאוויאטור"))
+            return
+        show = not self.kb.isVisible()
+        self.kb.setVisible(show)
+        self.kb_btn.setText(both("Hide the keyboard", "באהאלטן די קלאוויאטור") if show
+                            else both("Show the Yiddish keyboard", "אידישע קלאוויאטור"))
+
+    # -- download
+    def download(self):
+        self.dl_btn.hide()
+        self.bar.setValue(0); self.bar.show()
+        self.status.setText(both("Downloading the AI ... keep the internet on.", "מען נעמט אראפ דעם AI"))
+        self.fetch = AIFetch()
+        self.fetch.progress.connect(self.on_fetch)
+        self.fetch.done.connect(self.fetched)
+        self.fetch.start()
+
+    def on_fetch(self, d, t):
+        self.bar.setValue(int(1000 * d / t))
+        self.status.setText(both("Downloading the AI ... %.1f of %.1f GB" % (d / 1e9, t / 1e9), "מען נעמט אראפ דעם AI"))
+
+    def fetched(self, ok, msg):
+        self.fetch.wait(); self.fetch = None
+        self.bar.hide()
+        self.refresh()
+        if ok:
+            self.status.setText(both("✓ The AI is ready. Write what to fix and press Ask the AI.", "✓ דער AI איז גרייט"))
+        elif msg != "stopped":
+            self.status.setText(both("The download did not finish: %s\nPress the button again to go on where it stopped." % msg,
+                                     "עס האט נישט געענדיגט"))
+
+    # -- ask
+    def warm(self):
+        """Start the AI in the background now, so the first answer comes quicker."""
+        if self.th is None and ai.model_file() and ai.server_exe() and not self.win.ai_server.running():
+            self.th = AIAsk(self.win.ai_server, "", None)
+            self.th.done.connect(self.warmed)
+            self.send_btn.setEnabled(False)
+            self.status.setText(both("Starting the AI ...", "דער AI הייבט אן ..."))
+            self.th.start()
+
+    def warmed(self, ch, raw, err, secs):
+        self.th.wait(); self.th = None
+        log("ai warm-up %.1f s %s" % (secs, err))
+        self.status.setText(both("The AI could not start: " + err, "דער AI האט נישט אנגעהויבן") if err else
+                            both("✓ The AI is ready.", "✓ דער AI איז גרייט"))
+        self.refresh()
+
+    def send(self, _=None, text=None):
+        instr = (text if text is not None else self.box.toPlainText()).strip()
+        lang = self.lang.currentData()
+        if not instr or not lang or self.th is not None:
+            return False
+        src = self.win.ai_text(lang)
+        if not src.strip():
+            self.status.setText(both("There is no text in this language yet.", "נאך קיין טעקסט נישטא"))
+            return False
+        self.clear_changes()
+        self.ask_lang = lang
+        self.log.appendPlainText("You: " + instr)
+        self.box.clear()
+        self.send_btn.setEnabled(False)
+        self.status.setText(both("The AI is thinking ... (usually 10-40 seconds%s)" %
+                                 ("; the first time it also starts up" if not self.win.ai_server.running() else ""),
+                                 "דער AI טראכט ..."))
+        self.bar.setRange(0, 0); self.bar.show()
+        self.th = AIAsk(self.win.ai_server, src, instr)
+        self.th.done.connect(self.answered)
+        self.th.start()
+        return True
+
+    def answered(self, ch, raw, err, secs):
+        self.th.wait(); self.th = None
+        self.bar.hide(); self.bar.setRange(0, 1000)
+        self.last_seconds = secs
+        self.refresh()
+        if err:
+            self.log.appendPlainText("AI: (did not work: %s)" % err)
+            self.status.setText(both("The AI did not answer: " + err, "דער AI האט נישט געענטפערט"))
+            return
+        text = self.win.ai_text(self.ask_lang)
+        typing = self.win.job is not None
+        self.changes = []
+        for f, r in ch:
+            n = text.count(f)
+            if n or typing:        # while typing runs, a word may still come in later lines
+                self.changes.append((f, r, n))
+        if not self.changes:
+            self.log.appendPlainText("AI: no change to suggest.")
+            self.status.setText(both("The AI found nothing to change for that. Try naming the exact word, "
+                                     "like: change X to Y.", "דער AI האט נישט געפונען וואס צו טוישן"))
+            return
+        self.log.appendPlainText("AI: %d change(s) suggested (%.0f s)." % (len(self.changes), secs))
+        for f, r, n in self.changes:
+            where = ("%d place(s)" % n) if n else "not in the text yet; will be fixed when it comes"
+            b = QCheckBox("%s   →   %s     (%s)" % (f, r, where))
+            b.setChecked(True)
+            b.setLayoutDirection(Qt.RightToLeft if self.ask_lang in RTL else Qt.LeftToRight)
+            self.list_lay.addWidget(b)
+            self.boxes.append(b)
+        self.list_box.show(); self.remember.show(); self.ok_btn.show(); self.no_btn.show()
+        self.status.setText(both("Untick any you don't want, then press OK.", "נעמט אראפ דעם צייכן פון וואס איר ווילט נישט, און דרוקט OK"))
+
+    def clear_changes(self):
+        for b in self.boxes:
+            b.setParent(None); b.deleteLater()
+        self.boxes, self.changes = [], []
+        self.list_box.hide(); self.remember.hide(); self.ok_btn.hide(); self.no_btn.hide()
+
+    def apply(self):
+        pick = [(f, r) for (f, r, _n), b in zip(self.changes, self.boxes) if b.isChecked()]
+        lang = self.ask_lang
+        n = self.win.ai_apply(lang, pick, remember=self.remember.isChecked())
+        self.log.appendPlainText("Done: %d change(s), %d place(s) fixed%s." %
+                                 (len(pick), n, "; later lines are fixed as they come" if self.win.job else ""))
+        self.clear_changes()
+        self.status.setText(both("✓ Fixed. Write the next fix, or Close.", "✓ פארריכט"))
+        self.last_applied = (lang, pick, n)
+        return n
+
+    def closeEvent(self, e):
+        if self.fetch:
+            self.fetch.stop(); self.fetch.wait(); self.fetch = None
+        super().closeEvent(e)
+
+
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -796,6 +1108,10 @@ class Window(QMainWindow):
         self.job = None
         self.tabs_by_lang = {}
         self.update_info = None
+        self.ai_rules = {}       # lang -> [(find, replace)] the AI helper changes he pressed OK on, for this run
+        self.ai_server = ai.Server()
+        self.ai_dlg = None
+        self.partial_raw = ""
         self.setAcceptDrops(True)
 
         body = QWidget()
@@ -820,7 +1136,10 @@ class Window(QMainWindow):
         self.videos_btn.clicked.connect(self.my_videos)
         self.learned_btn = QPushButton(both("Learned words", "געלערנטע ווערטער"))
         self.learned_btn.clicked.connect(self.learned_words)
-        hrow.addWidget(self.videos_btn); hrow.addWidget(self.learned_btn); hrow.addStretch(1)
+        self.ai_btn = QPushButton(both("AI: fix words", "AI: פארריכטן ווערטער"))
+        self.ai_btn.setToolTip("Write what to fix (English or Yiddish); the AI suggests the changes; press OK")
+        self.ai_btn.clicked.connect(self.open_ai)
+        hrow.addWidget(self.videos_btn); hrow.addWidget(self.learned_btn); hrow.addWidget(self.ai_btn); hrow.addStretch(1)
         lay.addLayout(hrow)
         sub = QHBoxLayout()
         sub.addWidget(QLabel("Video or recording in, typed text out. No internet needed."))
@@ -1146,6 +1465,91 @@ class Window(QMainWindow):
         base = os.path.splitext(os.path.basename(path or self.path or "text"))[0]
         return "%s - %s.txt" % (base, NAME_EN[lang])
 
+    # -- the AI helper
+    def open_ai(self):
+        if self.ai_dlg is None:
+            self.ai_dlg = AIDialog(self)
+        self.ai_dlg.refresh()
+        self.ai_dlg.show(); self.ai_dlg.raise_(); self.ai_dlg.activateWindow()
+        self.ai_dlg.warm()
+        return self.ai_dlg
+
+    def ai_langs(self):
+        """The languages there is text in now (the spoken one while it is being typed too)."""
+        out = [l for l, t in self.tabs_by_lang.items() if t.edit.toPlainText().strip()]
+        if self.job and self.run_spoken not in out and self.partial_raw.strip():
+            out.insert(0, self.run_spoken)
+        return out
+
+    def ai_text(self, lang):
+        tab = self.tabs_by_lang.get(lang)
+        t = tab.edit.toPlainText() if tab else ""
+        if not t.strip() and self.job and lang == self.run_spoken:
+            t = self.partial.toPlainText()
+        return t
+
+    def ai_apply(self, lang, changes, remember=False):
+        """He pressed OK: change the shown text, the saved files and (while typing) every line still to come.
+        -> number of places changed now."""
+        changes = [(f, r) for f, r in changes if f and f != r]
+        if not changes:
+            return 0
+        log("ai apply %s %r (typing: %s)" % (lang, changes, bool(self.job)))
+        n = 0
+        if self.job:
+            self.ai_rules.setdefault(lang, []).extend(changes)      # the job reads these for the lines to come
+            if lang == self.run_spoken:
+                n += sum(self.partial_raw.count(f) for f, _r in changes)
+                self.show_partial(self.partial_raw)
+        path = self.shown_path()
+        tab = self.tabs_by_lang.get(lang)
+        if tab and tab.edit.toPlainText():
+            new, k = ai.apply(tab.edit.toPlainText(), changes)
+            if k:
+                tab.edit.setPlainText(new)
+                if path in self.results:
+                    self.results[path][lang] = new
+                try:
+                    d = os.path.join(docs_dir(), "Hafutza Typing")
+                    os.makedirs(d, exist_ok=True)
+                    write_text(os.path.join(d, self.file_name(lang, path)), new)
+                except Exception as e:
+                    log("ai autosave failed %r" % e)
+            n = max(n, k)
+        if not self.job and path:
+            try:
+                self.ai_fix_project(path, {lang: changes})
+            except Exception:
+                log("ai project fix failed: " + traceback.format_exc())
+        if remember:
+            spoken = self.run_spoken if getattr(self, "run_spoken", None) else None
+            for f, r in changes:
+                try:
+                    learn.add("speech" if lang == spoken else "tr", lang, f, r)
+                except Exception as e:
+                    log("ai remember failed %r" % e)
+        return n
+
+    def ai_fix_project(self, path, rules):
+        """Apply the changes to the saved timings file (for watching with the text) and its .txt/.srt files."""
+        if not path or not any(rules.values()):
+            return
+        proj = project.load(path)
+        if not proj:
+            return
+        langs, k = [], 0
+        for seg in proj.get("segments", []):
+            for l, ch in rules.items():
+                if ch and l in seg.get("t", {}):
+                    seg["t"][l], c = ai.apply(seg["t"][l], ch)
+                    if c and l not in langs:
+                        langs.append(l)
+                    k += c
+        if k:
+            project.save(proj)
+            project.export(proj, docs_dir(), langs=langs)
+            log("ai project fix: %d places in %s" % (k, langs))
+
     # -- run
     def choice(self):
         spoken = next(c for c, b in self.spoken_btn.items() if b.isChecked())
@@ -1172,6 +1576,7 @@ class Window(QMainWindow):
         self.run_spoken, self.run_targets = spoken, targets
         self.queue = list(self.files)
         self.results, self.problems = {}, {}
+        self.ai_rules = {}
         self.run_t0 = time.time()
         self.all_times = {}
         self.view_pick.blockSignals(True); self.view_pick.clear(); self.view_pick.blockSignals(False)
@@ -1197,12 +1602,13 @@ class Window(QMainWindow):
         opt.setWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
         self.partial.document().setDefaultTextOption(opt)
         self.bar.setValue(0); self.bar.show()
-        self.job = Job(self.path, spoken, targets)
+        self.partial_raw = ""
+        self.job = Job(self.path, spoken, targets, self.ai_rules)
         self.show_queue()
         self.show_files()
         self.job.status.connect(self.status.setText)
         self.job.progress.connect(self.on_progress)
-        self.job.partial.connect(self.partial.setPlainText)
+        self.job.partial.connect(self.show_partial)
         self.job.result.connect(self.got)
         self.job.done.connect(self.finished_)
         self.job.start()
@@ -1252,7 +1658,16 @@ class Window(QMainWindow):
                 self.bar.setRange(0, 1000)
             self.bar.setValue(int(f * 1000))
 
+    def show_partial(self, text):
+        self.partial_raw = text
+        rules = self.ai_rules.get(self.run_spoken)
+        self.partial.setPlainText(ai.apply(text, rules)[0] if rules else text)
+        if self.ai_dlg is not None:
+            self.ai_dlg.refresh()
+
     def got(self, lang, text):
+        if self.job is not None:     # AI fixes he pressed OK on after the job made this text
+            text = ai.apply(text, self.ai_rules.get(lang, [])[self.job.emitted.get(lang, 0):])[0]
         if self.path in self.results:
             self.results[self.path][lang] = text
         tab = self.tabs_by_lang.get(lang)
@@ -1268,6 +1683,11 @@ class Window(QMainWindow):
 
     def finished_(self, ok, msg):
         self.job.wait()
+        try:                     # an OK pressed in the last moments, after the job wrote its files
+            if self.job.made is not None:
+                self.ai_fix_project(self.path, {l: r[self.job.made.get(l, 0):] for l, r in self.ai_rules.items()})
+        except Exception:
+            log("ai project fix failed: " + traceback.format_exc())
         self.last_times = dict(self.job.times)
         self.all_times[os.path.basename(self.path)] = dict(self.job.times)
         stopped = self.job._stop
@@ -1309,6 +1729,8 @@ class Window(QMainWindow):
             w.setEnabled(True)
         self.show_files()
         self.show_watch()
+        if self.ai_dlg is not None:
+            self.ai_dlg.refresh()
         if self.tabs.count() and any(t.edit.toPlainText() for t in self.tabs_by_lang.values()):
             self.tabs.show()
             self.tabs.setCurrentIndex(0)
@@ -1394,6 +1816,9 @@ class Window(QMainWindow):
             self.job.stop(); self.job.wait()
         if self.link_job:
             self.link_job.stop(); self.link_job.wait()
+        if self.ai_dlg is not None:
+            self.ai_dlg.close()
+        self.ai_server.close()
         super().closeEvent(e)
 
 
@@ -1757,6 +2182,232 @@ def request_test(app, win, a):
     QTimer.singleShot(120000, lambda: finish(2))
 
 
+def ai_test(app, win, a):
+    """Build-machine test of the AI helper.
+    Model missing: the window opens, the AI button shows the one-time download offer (exit 0 with --ai-expect-missing).
+    Model there: start typing; while it types, ask (in English) to change a word that is in the typed lines, press OK,
+    and check every later line, the tab, the saved .txt and the timings file have the change; then ask (in Yiddish)
+    for a change in the English translation and check it too. Exit 0 only if all held."""
+    import re as _re
+    from collections import Counter
+    out = os.path.abspath(a.out); os.makedirs(out, exist_ok=True)
+    rep = {"version": VERSION, "file": a.ai_test, "model": ai.model_file(), "server": ai.server_exe(),
+           "ram_gb": round(ai.ram_gb(), 1), "steps": []}
+    st = {"t0": time.time()}
+    targets = a.targets.split(",")
+
+    def note(s):
+        rep["steps"].append("%6.1f  %s" % (time.time() - st["t0"], s))
+        log("ai test: " + s)
+
+    def shot(w, name):
+        try:
+            w.grab().save(os.path.join(out, name + ".png"))
+        except Exception as e:
+            log("shot %r" % e)
+
+    def finish(code):
+        rep["code"] = code
+        rep["seconds"] = round(time.time() - st["t0"], 1)
+        try:
+            rep["times"] = getattr(win, "last_times", {})
+        except Exception:
+            pass
+        with open(os.path.join(out, "report.json"), "w", encoding="utf-8") as f:
+            json.dump(rep, f, ensure_ascii=False, indent=1)
+        win.ai_server.close()
+        app.exit(code)
+
+    def every(ms, fn):
+        t = QTimer(win)
+        def tick():
+            try:
+                if fn():
+                    t.stop()
+            except Exception:
+                t.stop()
+                rep["error"] = traceback.format_exc()
+                finish(4)
+        t.timeout.connect(tick); t.start(ms)
+
+    def start():
+        win.set_file(a.ai_test)
+        win.spoken_btn[a.spoken].setChecked(True)
+        for c, b in win.target_box.items():
+            b.setChecked(c in targets)
+        shot(win, "ai-0-window")
+        d = win.open_ai()
+        app.processEvents()
+        shot(d, "ai-1-dialog")
+        rep["button"] = win.ai_btn.isVisible() and win.ai_btn.text()
+        rep["download_offer"] = d.dl_btn.isVisible()
+        rep["dialog_status"] = d.status.text()
+        if not ai.model_file():
+            note("model missing; download offer shown: %s" % rep["download_offer"])
+            ok = rep["download_offer"] and bool(rep["server"]) and a.ai_expect_missing
+            # the program still works without it: a short typing run
+            if not win.start(auto=True):
+                rep["typing_without_ai"] = "did not start"; finish(3); return
+            def done0():
+                if win.job is None:
+                    rep["typing_without_ai"] = bool(getattr(win, "last_ok", False)) and \
+                        all(t.edit.toPlainText().strip() for t in win.tabs_by_lang.values())
+                    note("typing without the AI ok: %s" % rep["typing_without_ai"])
+                    finish(0 if ok and rep["typing_without_ai"] else 1)
+                    return True
+            every(1000, done0)
+            return
+        if a.ai_expect_missing:
+            rep["error"] = "the model was expected to be missing"; finish(5); return
+        note("model there; warming the AI")
+
+        def warmed():
+            if d.th is None:
+                rep["warm_ok"] = win.ai_server.running()
+                rep["warm_status"] = d.status.text()
+                note("warm-up done, running %s" % rep["warm_ok"])
+                if not rep["warm_ok"]:
+                    finish(6); return True
+                if not win.start(auto=True):
+                    rep["error"] = "typing did not start"; finish(3); return True
+                note("typing started")
+                every(1000, wait_lines)
+                return True
+        every(500, warmed)
+
+    def wait_lines():
+        if win.job is None:
+            rep["error"] = "typing ended before 3 lines came"; finish(7); return True
+        lines = [l for l in win.partial_raw.split("\n") if l.strip()]
+        if len(lines) < 3:
+            return False
+        words = [w for w in _re.findall(r"[א-תװ-״יִ-ﭏ]+", win.partial_raw) if len(w) >= 4]
+        if not words:
+            return False
+        W = Counter(words).most_common(1)[0][0]
+        R = "הפצה־טעסט"
+        st["W"], st["R"] = W, R
+        rep["yi_word"], rep["yi_new"] = W, R
+        rep["yi_word_count_at_ask"] = win.partial_raw.count(W)
+        d = win.ai_dlg
+        d.refresh()
+        d.lang.setCurrentIndex(d.lang.findData(a.spoken))
+        instr = 'Change "%s" to "%s" everywhere.' % (W, R)
+        rep["yi_instruction"] = instr
+        rep["yi_lines_at_ask"] = len(lines)
+        note("asking during typing (%d lines typed): %s" % (len(lines), instr))
+        st["ask_t"] = time.time()
+        if not d.send(text=instr):
+            rep["error"] = "could not ask"; finish(8); return True
+        shot(d, "ai-2-thinking")
+        every(500, yi_answered)
+        return True
+
+    def yi_answered():
+        d = win.ai_dlg
+        if d.th is not None:
+            return False
+        rep["yi_answer_seconds"] = round(time.time() - st["ask_t"], 1)
+        rep["yi_suggested"] = [list(c) for c in d.changes]
+        rep["yi_log"] = d.log.toPlainText()
+        shot(d, "ai-3-suggested")
+        note("AI suggested %s in %.0f s" % (d.changes, rep["yi_answer_seconds"]))
+        if not any(f == st["W"] for f, _r, _n in d.changes):
+            rep["error"] = "the AI did not suggest the asked change"; finish(9); return True
+        rep["typing_when_ok_pressed"] = win.job is not None
+        rep["typing_progress_at_ok"] = win.bar.value() / 1000.0
+        n = d.apply()
+        rep["yi_places_fixed_at_ok"] = n
+        rep["partial_after_ok_has_old"] = st["W"] in win.partial.toPlainText()
+        rep["partial_after_ok_has_new"] = st["R"] in win.partial.toPlainText()
+        shot(win, "ai-4-after-ok-while-typing")
+        note("pressed OK while typing: %s; %d places" % (rep["typing_when_ok_pressed"], n))
+        every(2000, typing_done)
+        return True
+
+    def typing_done():
+        if win.job is not None:
+            return False
+        rep["typing_ok"] = bool(getattr(win, "last_ok", False))
+        note("typing finished ok=%s" % rep["typing_ok"])
+        W, R = st["W"], st["R"]
+        sp = a.spoken
+        tab = win.tabs_by_lang[sp].edit.toPlainText()
+        pr = project.load(win.path_last) or {"segments": []}
+        ptxt = project.text_of(pr, sp)
+        try:
+            dtxt = open(os.path.join(docs_dir(), "Hafutza Typing", win.file_name(sp, win.path_last)), encoding="utf-8").read()
+        except Exception as e:
+            dtxt = "(missing %r)" % e
+        rep["yi_check"] = {"tab_old": tab.count(W), "tab_new": tab.count(R), "project_old": ptxt.count(W),
+                           "project_new": ptxt.count(R), "docs_old": dtxt.count(W), "docs_new": dtxt.count(R),
+                           "job_fixed_later_lines": getattr(win, "last_times", {}).get("ai_fixes_" + sp, 0)}
+        write_text(os.path.join(out, "ai-text-%s.txt" % sp), tab)
+        c = rep["yi_check"]
+        rep["yi_ok"] = (rep["typing_ok"] and c["tab_old"] == 0 and c["project_old"] == 0 and c["docs_old"] == 0
+                        and c["tab_new"] > 0 and c["project_new"] > 0 and c["docs_new"] > 0)
+        note("Yiddish fix check %s" % c)
+        others = [t for t in targets if t != sp]
+        if not others:
+            finish(0 if rep["yi_ok"] else 1); return True
+        tl = others[0]
+        st["tl"] = tl
+        ttxt = win.tabs_by_lang[tl].edit.toPlainText()
+        stop = {"which", "there", "their", "about", "would", "these", "those", "where", "being", "other", "because"}
+        ws = [w for w in _re.findall(r"[A-Za-z]+", ttxt) if len(w) >= 5 and w.lower() not in stop]
+        if not ws:
+            rep["error"] = "no words in the translation"; finish(10); return True
+        w = Counter(ws).most_common(1)[0][0]
+        st["w"], st["r"] = w, "Hafutza"
+        rep["tr_word"] = w
+        rep["tr_word_count"] = ttxt.count(w)
+        d = win.ai_dlg
+        d.refresh()
+        d.lang.setCurrentIndex(d.lang.findData(tl))
+        instr = 'טוישט "%s" אויף "Hafutza"' % w
+        rep["tr_instruction"] = instr
+        note("asking in Yiddish about the %s text: %s" % (tl, instr))
+        st["ask_t"] = time.time()
+        if not d.send(text=instr):
+            rep["error"] = "could not ask (2)"; finish(8); return True
+        every(500, tr_answered)
+        return True
+
+    def tr_answered():
+        d = win.ai_dlg
+        if d.th is not None:
+            return False
+        rep["tr_answer_seconds"] = round(time.time() - st["ask_t"], 1)
+        rep["tr_suggested"] = [list(c) for c in d.changes]
+        shot(d, "ai-5-suggested-translation")
+        note("AI suggested %s in %.0f s" % (d.changes, rep["tr_answer_seconds"]))
+        w, r, tl = st["w"], st["r"], st["tl"]
+        if not any(f == w for f, _r, _n in d.changes):
+            rep["error"] = "the AI did not suggest the asked change (translation)"; finish(9); return True
+        n = d.apply()
+        tab = win.tabs_by_lang[tl].edit.toPlainText()
+        pr = project.load(win.path_last) or {"segments": []}
+        ptxt = project.text_of(pr, tl)
+        try:
+            dtxt = open(os.path.join(docs_dir(), "Hafutza Typing", win.file_name(tl, win.path_last)), encoding="utf-8").read()
+        except Exception as e:
+            dtxt = "(missing %r)" % e
+        rep["tr_check"] = {"fixed": n, "tab_old": tab.count(w), "tab_new": tab.count(r), "project_old": ptxt.count(w),
+                           "project_new": ptxt.count(r), "docs_old": dtxt.count(w), "docs_new": dtxt.count(r)}
+        write_text(os.path.join(out, "ai-text-%s.txt" % tl), tab)
+        shot(win, "ai-6-after-ok-translation")
+        c = rep["tr_check"]
+        rep["tr_ok"] = (n > 0 and c["tab_old"] == 0 and c["project_old"] == 0 and c["docs_old"] == 0
+                        and c["tab_new"] > 0 and c["project_new"] > 0 and c["docs_new"] > 0)
+        note("translation fix check %s" % c)
+        good = rep["yi_ok"] and rep["tr_ok"] and rep.get("typing_when_ok_pressed")
+        finish(0 if good else 1)
+        return True
+
+    QTimer.singleShot(1500, start)
+    QTimer.singleShot(int(a.ai_timeout * 1000), lambda: (rep.__setitem__("error", "timed out"), finish(11)))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("files", nargs="*")
@@ -1765,9 +2416,10 @@ def main():
     ap.add_argument("--more", action="append", default=[]); ap.add_argument("--drop", action="store_true")
     ap.add_argument("--update-test"); ap.add_argument("--click-test"); ap.add_argument("--link-test"); ap.add_argument("--report-after", type=float)
     ap.add_argument("--player-test"); ap.add_argument("--request-test"); ap.add_argument("--badge-test"); ap.add_argument("--expect", default="blue")
+    ap.add_argument("--ai-test"); ap.add_argument("--ai-expect-missing", action="store_true"); ap.add_argument("--ai-timeout", type=float, default=3600)
     a, _ = ap.parse_known_args()
     files = [f for f in a.files if os.path.isfile(f)]
-    test = bool(a.selftest or a.update_test is not None or a.click_test or a.link_test or a.player_test or a.request_test)
+    test = bool(a.selftest or a.update_test is not None or a.click_test or a.link_test or a.player_test or a.request_test or a.ai_test)
     other = updater.hold_mutex()
     app = QApplication(sys.argv)
     app.setApplicationName(TITLE)
@@ -1798,6 +2450,8 @@ def main():
         link_test(app, win, a)
     elif a.request_test:
         request_test(app, win, a)
+    elif a.ai_test:
+        ai_test(app, win, a)
     elif a.badge_test:
         badge_test(app, win, a)
     elif a.player_test:

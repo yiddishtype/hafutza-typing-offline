@@ -1,6 +1,11 @@
 **Hafutza Typing for Windows** - types up Yiddish (and Hebrew, English, Spanish, French) videos and recordings on your own computer, with no internet, and translates them to Yiddish, English, Hebrew, Spanish and French.
 
-Download **HafutzaTyping-Setup.exe** below and open it. (Have version 1.1, 1.2 or 1.3? Just press the program's **Update** button. Have version 1.0? Install this one over it. Your typed texts and the downloaded parts are kept.)
+Download **HafutzaTyping-Setup.exe** below and open it. (Have version 1.1, 1.2, 1.3 or 1.3.1? Just press the program's **Update** button. Have version 1.0? Install this one over it. Your typed texts and the downloaded parts are kept.)
+
+New in 1.4:
+- **AI: fix words** (new button at the top): write what to fix, in Yiddish or English, for example *change X to Y* or *write Reb, not Rabbi*. The AI shows the word changes it suggests; untick any you don't want and press **OK**. Nothing changes without OK.
+- It works **while a video is still being typed or translated**: the lines still to come get the fix too. The .txt and .srt files and the Watch-and-fix view get the fix as well. Tick **Also remember these** to have it fixed in the next videos too (Learned words).
+- It runs on your own computer, with no internet. The AI is a **separate one-time download (2.7 GB)**: the program offers it the first time you press the button. It needs about **8 GB of memory** in the computer and usually answers in 10 to 40 seconds. The rest of the program works just the same without it.
 
 New in 1.3.1:
 - Facebook video links now come with the picture, not only the sound.
