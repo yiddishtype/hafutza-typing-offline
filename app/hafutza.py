@@ -847,6 +847,7 @@ class AIAsk(QThread):
     def __init__(self, server, text, instruction):
         super().__init__()
         self.server, self.text, self.instruction = server, text, instruction
+        self.by = ""
 
     def run(self):
         t = time.time()
@@ -857,6 +858,11 @@ class AIAsk(QThread):
                 return
             ch, raw = self.server.ask(ai.context(self.text, self.instruction), self.instruction)
             log("ai answer %.1f s: %s" % (time.time() - t, raw[:500].replace("\n", " ")))
+            self.by = "ai"
+            q = ai.quoted(self.instruction)
+            if not ch and q and q[0] in self.text:
+                ch, self.by = [q], "quotes"
+                log("ai suggested nothing; using the quoted words %r" % (q,))
             self.done.emit(ch, raw, "", time.time() - t)
         except Exception as e:
             log("ai failed: " + traceback.format_exc())
@@ -1042,7 +1048,7 @@ class AIDialog(QDialog):
         return True
 
     def answered(self, ch, raw, err, secs):
-        self.th.wait(); self.th = None
+        self.th.wait(); self.last_by = self.th.by; self.th = None
         self.bar.hide(); self.bar.setRange(0, 1000)
         self.last_seconds = secs
         self.refresh()
@@ -2309,6 +2315,7 @@ def ai_test(app, win, a):
             return False
         rep["yi_answer_seconds"] = round(time.time() - st["ask_t"], 1)
         rep["yi_suggested"] = [list(c) for c in d.changes]
+        rep["yi_by"] = getattr(d, "last_by", "")
         rep["yi_log"] = d.log.toPlainText()
         shot(d, "ai-3-suggested")
         note("AI suggested %s in %.0f s" % (d.changes, rep["yi_answer_seconds"]))
@@ -2379,6 +2386,7 @@ def ai_test(app, win, a):
             return False
         rep["tr_answer_seconds"] = round(time.time() - st["ask_t"], 1)
         rep["tr_suggested"] = [list(c) for c in d.changes]
+        rep["tr_by"] = getattr(d, "last_by", "")
         shot(d, "ai-5-suggested-translation")
         note("AI suggested %s in %.0f s" % (d.changes, rep["tr_answer_seconds"]))
         w, r, tl = st["w"], st["r"], st["tl"]

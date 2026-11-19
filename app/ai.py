@@ -22,7 +22,30 @@ SYS = ("You are the editor inside a Yiddish typing program. The user gives you a
        "or its English or other translation) and an instruction, in English or Yiddish. Answer with ONLY a JSON list "
        "of the changes to make, like [{\"find\": \"exact words now in the text\", \"replace\": \"new words\"}]. "
        "\"find\" must be copied exactly from the text. Make only the changes the instruction asks for. "
+       "The instruction may be in Yiddish even when the text is English: \"טוישט X אויף Y\", \"בייט X צו Y\", "
+       "\"מאך X Y\", \"שרייב Y אנשטאט X\" all mean: change X to Y. Copy X and Y exactly as the user wrote them. "
        "If the instruction asks for no change you can make, answer [].")
+
+# Short worked examples shown to the AI before the real question (a small model follows examples best).
+SHOTS = [
+    ("TEXT:\nThe Rebbe tells the story of the old shul.\n\nINSTRUCTION: טוישט \"shul\" אויף \"synagogue\"",
+     '[{"find": "shul", "replace": "synagogue"}]'),
+    ("TEXT:\nדער רבי האט געזאגט א מעשה פון זיין טאטן.\n\nINSTRUCTION: the word for story should be מעשׂה",
+     '[{"find": "מעשה", "replace": "מעשׂה"}]'),
+    ("TEXT:\nWe went to Bnei Brak on Sunday.\n\nINSTRUCTION: בייט \"Sunday\" צו \"Monday\"",
+     '[{"find": "Sunday", "replace": "Monday"}]'),
+]
+
+_Q = r'["\u201c\u201d\u201e\u05f4]([^"\u201c\u201d\u201e\u05f4]+)["\u201c\u201d\u201e\u05f4]'
+
+
+def quoted(instruction):
+    """(X, Y) when the instruction names exactly two words in quotes, like: change "X" to "Y" (any language).
+    Used only when the AI suggests nothing: the user still sees it and presses OK."""
+    m = re.findall(_Q, instruction)
+    if len(m) == 2 and m[0].strip() and m[0] != m[1]:
+        return m[0], m[1]
+    return None
 
 
 # ------------------------------------------------------------------ places
@@ -183,7 +206,10 @@ class Server:
     def ask(self, text, instruction, stop=lambda: False):
         """-> (list of (find, replace), raw answer)."""
         self.start(stop)
-        body = {"messages": [{"role": "system", "content": SYS},
+        shots = []
+        for q, a in SHOTS:
+            shots += [{"role": "user", "content": q}, {"role": "assistant", "content": a}]
+        body = {"messages": [{"role": "system", "content": SYS}] + shots + [
                              {"role": "user", "content": "TEXT:\n" + text + "\n\nINSTRUCTION: " + instruction}],
                 "temperature": 0, "max_tokens": 800, "chat_template_kwargs": {"enable_thinking": False}}
         req = urllib.request.Request("http://127.0.0.1:%d/v1/chat/completions" % self.port,
