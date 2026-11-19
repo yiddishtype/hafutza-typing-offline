@@ -52,6 +52,10 @@ try:
     import whatsnew
     import requests_out
     import ai
+    import prefs
+    import addons
+    import extras
+    extras.H = sys.modules[__name__]
     from engine import LANGS, NAME_YI, NAME_EN, log
 except Exception:
     _excepthook(*sys.exc_info())
@@ -780,6 +784,7 @@ class ResultTab(QWidget):
         row.addWidget(self.copy); row.addWidget(self.save); row.addStretch(1)
         lay.addLayout(row)
         self.edit = QPlainTextEdit()
+        self.edit.setObjectName("typed")
         self.edit.setMinimumHeight(220)
         if lang in RTL:
             self.edit.setLayoutDirection(Qt.RightToLeft)
@@ -928,7 +933,7 @@ class AIDialog(QDialog):
             " QFrame#chg QLabel { color: #14361f; }"
             " QPushButton#undo { min-height: 26px; padding: 2px 12px; font-size: 10pt; }"
             " QPushButton#send { background: #6a3fd0; color: white; font-size: 16pt; border-radius: 20px;"
-            "   min-height: 0; min-width: 0; padding: 0; }"
+            "   min-height: 40px; min-width: 40px; padding: 0; }"
             " QPushButton#send:disabled { background: #b9aee0; }")
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 8, 8, 8)
@@ -976,7 +981,7 @@ class AIDialog(QDialog):
         # the box to write in, at the bottom
         self.kb_spot = QVBoxLayout(); lay.addLayout(self.kb_spot)
         brow = QHBoxLayout(); brow.setSpacing(6)
-        self.kb_btn = QPushButton("א"); self.kb_btn.setFixedSize(40, 40)
+        self.kb_btn = QPushButton("א"); self.kb_btn.setObjectName("kb"); self.kb_btn.setFixedSize(40, 40)
         self.kb_btn.setToolTip("Yiddish keyboard  -  אידישע קלאוויאטור")
         self.kb_btn.clicked.connect(self.toggle_kb)
         brow.addWidget(self.kb_btn, 0, Qt.AlignBottom)
@@ -1167,9 +1172,7 @@ class AIDialog(QDialog):
         self.bubble("me", instr)
         self.box.clear()
         if not src.strip():
-            self.bubble("bot", both("There is no typed text yet. Type a video first (or wait for the first lines), "
-                                    "then I can work on it.", "נאך קיין טעקסט נישטא"))
-            return False
+            src = "(no typed text yet)"
         self.changes = []
         self.ask_lang = lang
         self.send_btn.setEnabled(False)
@@ -1189,6 +1192,12 @@ class AIDialog(QDialog):
         if err:
             self.bubble("bot", "(" + both("That did not work: ", "עס האט נישט געארבעט: ") + err + ")")
             return
+        try:
+            if extras.handle(self, ai.parse_answer(raw), instr, ch):
+                self.history.append((instr, reply or ""))
+                return
+        except Exception:
+            log("extras: " + traceback.format_exc())
         lang = self.ask_lang
         text = self.win.ai_text(lang)
         typing = self.win.job is not None
@@ -1274,10 +1283,11 @@ class Window(QMainWindow):
         self.setAcceptDrops(True)
 
         body = QWidget()
-        lay = QVBoxLayout(body)
+        body.setObjectName("body"); body.setAttribute(Qt.WA_StyledBackground, True)
+        self.lay = lay = QVBoxLayout(body)
         lay.setSpacing(10)
         head = QHBoxLayout()
-        t = QLabel(TITLE)
+        self.title_label = t = QLabel(TITLE)
         f = t.font(); f.setPointSize(22); f.setBold(True); t.setFont(f)
         head.addWidget(t)
         head.addStretch(1)
@@ -1289,8 +1299,10 @@ class Window(QMainWindow):
         self.update_btn.setToolTip("Check for a new version of Hafutza Typing and install it")
         self.update_btn.clicked.connect(self.do_update)
         head.addWidget(self.update_btn)
+        head.addWidget(extras.make_menu_button(self))
         lay.addLayout(head)
-        hrow = QHBoxLayout()
+        self.hrow_w = QWidget()
+        self.hrow = hrow = QHBoxLayout(self.hrow_w); hrow.setContentsMargins(0, 0, 0, 0)
         self.videos_btn = QPushButton(both("My typed videos (watch and fix)", "מיינע ווידעאס (זען און פארריכטן)"))
         self.videos_btn.clicked.connect(self.my_videos)
         self.learned_btn = QPushButton(both("Learned words", "געלערנטע ווערטער"))
@@ -1299,12 +1311,13 @@ class Window(QMainWindow):
         self.ai_btn.setToolTip("Write what to fix (English or Yiddish); the AI suggests the changes; press OK")
         self.ai_btn.clicked.connect(self.open_ai)
         hrow.addWidget(self.videos_btn); hrow.addWidget(self.learned_btn); hrow.addWidget(self.ai_btn); hrow.addStretch(1)
-        lay.addLayout(hrow)
-        sub = QHBoxLayout()
+        lay.addWidget(self.hrow_w)
+        self.sub_w = QWidget()
+        sub = QHBoxLayout(self.sub_w); sub.setContentsMargins(0, 0, 0, 0)
         sub.addWidget(QLabel("Video or recording in, typed text out. No internet needed."))
         sub.addStretch(1)
         sub.addWidget(RTLLabel("א ווידעא אדער רעקארדירונג אריין, געשריבענע טעקסט ארויס"))
-        lay.addLayout(sub)
+        lay.addWidget(self.sub_w)
 
         # 1 - the files
         g1 = QGroupBox("1.  The files  -  די פיילס")
@@ -1313,7 +1326,8 @@ class Window(QMainWindow):
         self.dropbox.files.connect(self.dropped)
         self.dropbox.urls.connect(self.get_links)
         l1.addWidget(self.dropbox)
-        lrow = QHBoxLayout()
+        self.link_w = QWidget()
+        lrow = QHBoxLayout(self.link_w); lrow.setContentsMargins(0, 0, 0, 0)
         lrow.addWidget(QLabel("Or paste a video link:\nאדער לייגט אריין א לינק:"))
         self.link_edit = QLineEdit()
         self.link_edit.setPlaceholderText("https://...   (YouTube, Facebook, Instagram, Vimeo, other sites, or a link to an .mp4 / .mp3)")
@@ -1324,7 +1338,7 @@ class Window(QMainWindow):
         self.link_btn.setMinimumHeight(56)
         self.link_btn.clicked.connect(self.link_go)
         lrow.addWidget(self.link_btn)
-        l1.addLayout(lrow)
+        l1.addWidget(self.link_w)
         self.link_status = QLabel("")
         self.link_status.setWordWrap(True)
         self.link_status.hide()
@@ -1427,7 +1441,7 @@ class Window(QMainWindow):
         self.tabs.hide()
         lay.addWidget(self.tabs, 1)
 
-        foot = QLabel("Everything stays on this computer. A copy of every text is also kept in: "
+        self.foot = foot = QLabel("Everything stays on this computer. A copy of every text is also kept in: "
                       + os.path.join(docs_dir(), "Hafutza Typing"))
         foot.setWordWrap(True)
         foot.setStyleSheet("color: #5b6470; font-size: 10pt;")
@@ -1447,7 +1461,7 @@ class Window(QMainWindow):
         self.ai_panel.setStyleSheet("QScrollArea#aipanel { border: none; border-left: 2px solid #c8ccd2; background: #f7f9fc; }")
         self.ai_panel.hide()
         central = QWidget()
-        cl = QHBoxLayout(central); cl.setContentsMargins(0, 0, 0, 0); cl.setSpacing(0)
+        self.cl = cl = QHBoxLayout(central); cl.setContentsMargins(0, 0, 0, 0); cl.setSpacing(0)
         cl.addWidget(scroll, 1)
         cl.addWidget(self.ai_panel)
         self.setCentralWidget(central)
@@ -1464,6 +1478,7 @@ class Window(QMainWindow):
         self.ai_ball.clicked.connect(lambda: self.show_ai(not self.ai_panel.isVisible()))
         self.ai_ball.raise_()
         self.resize(1000, 900)
+        extras.setup(self)
 
     # -- the AI ball and side panel
     def ai_panel_width(self):
@@ -1476,9 +1491,11 @@ class Window(QMainWindow):
                 w = int(round(4 * dpi / max(scr.devicePixelRatio(), 1.0)))   # 4 real inches, in the window's own pixels
         except Exception:
             pass
-        return max(340, min(w, 560))
+        return extras.panel_width(self, max(340, min(w, 560)))
 
     def place_ball(self):
+        if hasattr(self, "ai_full"):
+            return extras.place_ball(self)
         c = self.centralWidget()
         if c is None or not hasattr(self, "ai_ball"):
             return
@@ -1495,6 +1512,9 @@ class Window(QMainWindow):
         if self.ai_dlg is None:
             self.ai_dlg = AIDialog(self)
             self.ai_panel.setWidget(self.ai_dlg)
+        if not show and getattr(self, "ai_full", False):
+            self.ai_full = False
+            self.scroll.show(); self.cl.setStretchFactor(self.ai_panel, 0)
         if show == self.ai_panel.isVisible():
             if show:
                 self.ai_dlg.refresh()
@@ -1502,7 +1522,7 @@ class Window(QMainWindow):
             return self.ai_dlg
         w = self.ai_panel_width()
         self.ai_panel.setFixedWidth(w)
-        grow = not (self.isMaximized() or self.isFullScreen())
+        grow = not (self.isMaximized() or self.isFullScreen() or getattr(self, "ai_full", False))
         if show:
             self.ai_dlg.refresh()
             self.ai_dlg.show()
@@ -1534,6 +1554,7 @@ class Window(QMainWindow):
     def showEvent(self, e):
         super().showEvent(e)
         QTimer.singleShot(0, self.place_ball)
+        QTimer.singleShot(0, lambda: extras.apply_window(self, first=True))
 
     def fit_screen(self):
         """Show the window whole on a small laptop screen: there it opens filling the screen."""
@@ -2035,7 +2056,7 @@ class Window(QMainWindow):
     # -- the video player
     def show_watch(self):
         p = self.shown_path()
-        self.watch_btn.setVisible(bool(p and not self.job and project.load(p)))
+        self.watch_btn.setVisible(bool(p and not self.job and project.load(p)) and "watch" not in prefs.get("hide"))
 
     def open_player(self, video):
         try:
@@ -2745,7 +2766,8 @@ def ai_test(app, win, a):
         rep["undo_check"] = {"tab_same_as_before": tab2 == ttxt0, "tab_old_back": tab2.count(w),
                              "tab_new_left": tab2.count(r), "project_old_back": ptxt2.count(w),
                              "project_new_left": ptxt2.count(r), "button": rec["button"].text()}
-        rep["undo_ok"] = bool(tab2 == ttxt0 and tab2.count(r) == 0 and ptxt2.count(r) == 0 and ptxt2.count(w) > 0)
+        rep["undo_ok"] = bool(tab2 == ttxt0 and tab2.count(r) == ttxt0.count(r) and ptxt2.count(r) <= ttxt0.count(r)
+                              and ptxt2.count(w) > 0)   # a word already there before the fix (e.g. from the Yiddish fix) may stay
         shot(d, "ai-7-undo")
         note("undo check %s" % rep["undo_check"])
         # a plain question: a chat answer, and the text stays as it is
@@ -2772,8 +2794,56 @@ def ai_test(app, win, a):
         shot(d, "ai-8-chat")
         shot(win, "ai-9-window-chat")
         note("question answered in %.0f s: %r (text unchanged %s)" % (rep["q_answer_seconds"], rep["q_reply"], same))
-        good = rep["yi_ok"] and rep["tr_ok"] and rep.get("typing_when_ok_pressed") and rep["undo_ok"] and rep["q_ok"]
-        finish(0 if good else 1)
+        st["more"] = list(MORE_ASKS)
+        rep["more"] = []
+        next_more()
+        return True
+
+    # the real offline AI asked to change the look and add a button (only the blue-button one counts; the rest recorded)
+    MORE_ASKS = ["make the buttons blue and bigger and move the AI button to the left",
+                 "make the typed text bigger",
+                 "add a button that copies all the text",
+                 "email me the typed text every morning"]
+
+    def next_more():
+        d = win.ai_dlg
+        if not st["more"]:
+            r0 = rep["more"][0] if rep["more"] else {}
+            rep["more_blue_ok"] = bool(r0.get("settings", {}).get("ai_button_pos") == "left"
+                                       and r0.get("settings", {}).get("button_size", 100) > 100
+                                       and r0.get("settings", {}).get("button_color"))
+            try:
+                extras.reset_normal(win)
+                for x in addons.load_all():
+                    addons.delete(x["id"])
+                extras.refresh_addons(win)
+            except Exception as e:
+                log("ai test reset: %r" % e)
+            good = rep["yi_ok"] and rep["tr_ok"] and rep.get("typing_when_ok_pressed") and rep["undo_ok"] and rep["q_ok"] \
+                and rep["more_blue_ok"]
+            finish(0 if good else 1)
+            return
+        q = st["more"].pop(0)
+        st["more_q"], st["ask_t"] = q, time.time()
+        win.last_help = None
+        if not d.send(text=q):
+            rep["more"].append({"ask": q, "error": "could not ask"}); next_more(); return
+        every(500, more_answered)
+
+    def more_answered():
+        d = win.ai_dlg
+        if d.th is not None:
+            return False
+        p = prefs.load()
+        rec = {"ask": st["more_q"], "seconds": round(time.time() - st["ask_t"], 1),
+               "reply": getattr(d, "last_reply", ""),
+               "settings": {k: v for k, v in p.items() if v != prefs.DEFAULTS.get(k)},
+               "addons": [{"name": x["name"], "kind": x["kind"], "steps": x.get("steps")} for x in addons.load_all()],
+               "offered_send_to_avi": getattr(win, "last_help", None) is not None}
+        rep["more"].append(rec)
+        note("asked %r: %s" % (st["more_q"], {k: rec[k] for k in ("seconds", "settings", "addons", "offered_send_to_avi")}))
+        shot(win, "ai-more-%d" % len(rep["more"]))
+        next_more()
         return True
 
     QTimer.singleShot(1500, start)
@@ -2788,10 +2858,10 @@ def main():
     ap.add_argument("--more", action="append", default=[]); ap.add_argument("--drop", action="store_true")
     ap.add_argument("--update-test"); ap.add_argument("--click-test"); ap.add_argument("--link-test"); ap.add_argument("--report-after", type=float)
     ap.add_argument("--player-test"); ap.add_argument("--request-test"); ap.add_argument("--badge-test"); ap.add_argument("--expect", default="blue")
-    ap.add_argument("--ai-test"); ap.add_argument("--ai-expect-missing", action="store_true"); ap.add_argument("--ai-timeout", type=float, default=3600)
+    ap.add_argument("--ai-test"); ap.add_argument("--ui-test", action="store_true"); ap.add_argument("--ai-expect-missing", action="store_true"); ap.add_argument("--ai-timeout", type=float, default=3600)
     a, _ = ap.parse_known_args()
     files = [f for f in a.files if os.path.isfile(f)]
-    test = bool(a.selftest or a.update_test is not None or a.click_test or a.link_test or a.player_test or a.request_test or a.ai_test)
+    test = bool(a.selftest or a.update_test is not None or a.click_test or a.link_test or a.player_test or a.request_test or a.ai_test or a.ui_test)
     other = updater.hold_mutex()
     app = QApplication(sys.argv)
     app.setApplicationName(TITLE)
@@ -2810,6 +2880,7 @@ def main():
     win.fit_screen()
     if not test:
         win._srv = listen_for_files(win)
+        extras.start_flusher(win)
     if files:
         win.add_files(files)
     if a.selftest:
@@ -2824,6 +2895,8 @@ def main():
         request_test(app, win, a)
     elif a.ai_test:
         ai_test(app, win, a)
+    elif a.ui_test:
+        extras.ui_test(app, win, a)
     elif a.badge_test:
         badge_test(app, win, a)
     elif a.player_test:

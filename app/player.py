@@ -90,6 +90,12 @@ class VideoView(QGraphicsView):
         if not parts:
             self.sub.hide(); self.box.hide(); return
         f = QFont("Segoe UI")
+        try:
+            import prefs
+            if prefs.get("font"):
+                f.setFamily(prefs.get("font"))      # the font he picked for the words
+        except Exception:
+            pass
         f.setPixelSize(max(14, min(40, int(h / 15))))
         f.setBold(True)
         self.sub.setFont(f)
@@ -284,7 +290,11 @@ class Player(QWidget):
             grid.addWidget(QLabel(lang_name(l) + (" (typed)" if l == self.spoken else " (translation)")), n, 0)
             e = QLineEdit()
             e.setMinimumHeight(44)
-            fe = e.font(); fe.setPointSize(15); e.setFont(fe)
+            try:
+                import prefs
+                e.setFont(prefs.text_font(e.font(), max(15, prefs.get("font_size"))))
+            except Exception:
+                fe = e.font(); fe.setPointSize(15); e.setFont(fe)
             if l in RTL:
                 e.setLayoutDirection(Qt.RightToLeft)
                 e.setAlignment(Qt.AlignRight)
@@ -338,6 +348,11 @@ class Player(QWidget):
         # the player
         self.player = QMediaPlayer(self)
         self.audio = QAudioOutput(self)
+        try:
+            import prefs
+            self.audio.setVolume(prefs.get("volume") / 100.0)     # the volume he set in Settings
+        except Exception:
+            pass
         self.player.setAudioOutput(self.audio)
         self.player.setVideoOutput(self.view.video)
         self.player.durationChanged.connect(lambda d: self.slider.setRange(0, d))

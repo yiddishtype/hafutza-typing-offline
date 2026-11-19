@@ -9,6 +9,17 @@ NOTES = {
         "You can also just ask it a question.",
         "One download: after installing, the program downloads everything it needs once, the AI included, "
         "with one progress bar. Then it all works with no internet.",
+        "New: the three-dots menu at the top (⋮): Settings (brightness, sound, 21 fonts for the typed words, "
+        "colours, sizes, places), the AI as a full window, My add-ons, Check for update, and Reset to normal. "
+        "Everything you set is remembered.",
+        "Tell the AI how the program should look (like: make the buttons blue and bigger) and it changes it, "
+        "with no internet. Every change has Undo.",
+        "Ask the AI for a new button (like: a button that copies all the text) and it builds it as an add-on. "
+        "Turn add-ons on or off, or delete them, under My add-ons.",
+        "Something too big for the AI? It offers a Send to Avi button: your request goes to us "
+        "(or waits and goes by itself when the internet is on).",
+        "Ask a different AI (needs internet): use your own Gemini, OpenAI or Claude key, kept only on your computer, "
+        "or copy a ready request to a free AI website and paste the answer back.",
     ],
     "1.4": [
         "New: AI: fix words (button at the top). Write what to fix, in Yiddish or English, like: change X to Y. "

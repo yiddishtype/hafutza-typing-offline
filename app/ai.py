@@ -11,14 +11,14 @@
 """
 import hashlib, json, os, re, socket, subprocess, sys, threading, time, urllib.request
 
-import engine
+import engine, prefs
 
 MODEL_URL = ("https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/"
              "e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-Q4_K_M.gguf")
 MODEL_FILE = "Qwen3.5-4B-Q4_K_M.gguf"
 MODEL_SIZE = 2740937888
 MODEL_SHA = "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4"
-CTX = 4096
+CTX = 6144
 
 SYS = ("You are the AI helper inside a Yiddish typing program. The user chats with you, in English or Yiddish, about "
        "a typed text (Yiddish in Hebrew letters, or its English or other translation). Answer with ONLY a JSON object: "
@@ -29,7 +29,27 @@ SYS = ("You are the AI helper inside a Yiddish typing program. The user chats wi
        "When the user only asks a question or chats, answer it in \"reply\" (short, in the user's language) and give "
        "\"changes\": []. "
        "The message may be in Yiddish even when the text is English: \"טוישט X אויף Y\", \"בייט X צו Y\", "
-       "\"מאך X Y\", \"שרייב Y אנשטאט X\" all mean: change X to Y. Copy X and Y exactly as the user wrote them.")
+       "\"מאך X Y\", \"שרייב Y אנשטאט X\" all mean: change X to Y. Copy X and Y exactly as the user wrote them. "
+       "When the user asks to change how the PROGRAM looks, sounds or is laid out, do not change the text: give "
+       "\"changes\": [] and add \"settings\" with only what was asked. Settings: font_size (\"+2\", \"-2\" or 9-36, the "
+       "letters of the text), font (a font name), brightness (\"-20\" or 40-100), volume (\"+20\" or 0-100), theme (light "
+       "or dark), button_color, button_text_color, background_color, text_color, start_color, ai_color (a colour name), "
+       "button_size (per cent: \"+30\" bigger, \"-20\" smaller), ui_size (the program's own words, 9-20), title_size, "
+       "ai_side (left or right: the AI ball and panel), ai_button_pos (left or right: the AI button in the top row), "
+       "toolbar (top or bottom), window (normal, maximized, fullscreen), hide or show (a part: videos, learned, ai_button, "
+       "update, version, title, subtitle, ball, footer, watch, link), labels ({\"part\": \"new words on it\"}), spoken "
+       "and translate (yi en he hu ru fr es de), reset (true = everything back to normal). "
+       "When the user asks for a NEW part (a new button, a menu item, a shortcut key, a side note or a word list) made of "
+       "things the program can already do, give \"changes\": [] and add \"addon\": {\"name\": \"...\", \"kind\": \"button\" "
+       "or \"menu\" or \"shortcut\" or \"panel\", \"label\": \"words on it\", \"key\": \"Ctrl+T\" (shortcut only), "
+       "\"steps\": [{\"do\": \"...\", \"value\": \"...\"}], \"notes\": \"words of a note\" (panel), \"items\": [\"words\"] "
+       "(panel word list)}. Steps (\"do\"): ai (value: what to ask the AI to do to the text), replace (value: {\"find\": "
+       "\"..\", \"replace\": \"..\"}), insert (value: words to add at the end), copy, save (value: txt or docx), "
+       "open_folder, settings (value: settings as above), open (value: settings, ai, videos, learned, update or addons), "
+       "tab (value: yi en he ...), message (value: words to show). "
+       "When the user asks for something none of this can do (a new feature, the internet, changing the program's code, "
+       "anything not listed), give \"changes\": [], add \"too_big\": true and say in \"reply\" that you can't build that "
+       "yourself, and that he can press Send to Avi or Ask a different AI.")
 
 # Short worked examples shown to the AI before the real question (a small model follows examples best).
 SHOTS = [
@@ -43,7 +63,71 @@ SHOTS = [
      'for all of us.", "replace": "It was a long trip."}]}'),
     ("TEXT:\nWe went to Bnei Brak on Sunday.\n\nMESSAGE: where did they go?",
      '{"reply": "They went to Bnei Brak, on Sunday.", "changes": []}'),
+    ("TEXT:\nדער רבי האט געזאגט א מעשה.\n\nMESSAGE: make the letters bigger and the program darker",
+     '{"reply": "Made the letters bigger and the program darker.", "changes": [], '
+     '"settings": {"font_size": "+2", "brightness": "-20"}}'),
+    ("TEXT:\nWe went to Bnei Brak.\n\nMESSAGE: make the buttons green and smaller, put the AI on the left and hide the title",
+     '{"reply": "Made the buttons green and smaller, moved the AI to the left and hid the title.", "changes": [], '
+     '"settings": {"button_color": "green", "button_size": "-20", "ai_side": "left", "hide": "title"}}'),
+    ("TEXT:\nWe went to Bnei Brak.\n\nMESSAGE: add a button Translate that turns the text into English",
+     '{"reply": "Added a Translate button at the top.", "changes": [], "addon": {"name": "Translate", "kind": "button", '
+     '"label": "Translate", "steps": [{"do": "ai", "value": "translate the whole text into English"}]}}'),
+    ("TEXT:\nWe went to Bnei Brak.\n\nMESSAGE: make it send the text to my WhatsApp every night",
+     '{"reply": "I can\'t build that myself: it needs a new feature. Press Send to Avi, or Ask a different AI.", '
+     '"changes": [], "too_big": true}'),
 ]
+
+# Everything an online AI needs to know to build a settings change or an add-on (the "Ask a different AI" road).
+SPEC_FULL = """You are helping the user of "Hafutza Typing", a Windows program that types out Yiddish (and other) videos.
+The program cannot run code from you. It can only take ONE JSON object, which it checks and applies (with Undo):
+
+{"reply": "one short sentence for the user",
+ "settings": { ...only the settings to change... },
+ "addon": { ...one new part, or leave this out... },
+ "too_big": true   (only if none of this can do what he asks)}
+
+SETTINGS (leave out what he did not ask for):
+- font_size: letters of the typed text, 9 to 36, or "+2" / "-2"
+- font: the typed text's font name, one of: {FONTS}
+- ui_size: the program's own words, 9 to 20;  title_size: the big title, 12 to 44
+- brightness: 40 to 100 (or "-20");  volume: 0 to 100 (or "+20")
+- theme: "light" or "dark"
+- button_color, button_text_color, background_color, text_color, start_color, ai_color: a colour name or #rrggbb ("" = usual)
+- button_size: per cent of the usual size, 60 to 220, or "+30" / "-20"
+- ai_side: "left" or "right" (the round AI ball and the AI panel)
+- ai_width: AI panel width in pixels (0 = usual, about 4 inches)
+- ai_button_pos: "left" or "right" (the AI button in the row of buttons at the top)
+- toolbar: "top" or "bottom" (that row of buttons)
+- window: "normal", "maximized" or "fullscreen"
+- hide: a part name or a list;  show: a part name or a list. Parts: videos (My typed videos button), learned (Learned words
+  button), ai_button, update, version, title, subtitle, ball (round AI ball), footer, watch (Watch the video button), link
+  (video link box)
+- labels: {"part": "new words on that button"}
+- spoken: language spoken, one of yi en he hu ru fr es de;  translate: list of languages to type it out in
+- reset: true puts everything back to normal
+
+ADDON (one new part, made from these blocks only):
+{"name": "short name", "kind": "button" | "menu" | "shortcut" | "panel",
+ "label": "words on the button or menu item", "key": "Ctrl+Shift+T" (kind shortcut only),
+ "steps": [ {"do": "<step>", "value": ...}, ... ]   (run in order when it is pressed),
+ "notes": "words for a side note" (kind panel), "items": ["words", "for", "a word list"] (kind panel: pressing one adds it to the text)}
+button = a new button in the row at the top; menu = a new item in the three-dots menu; shortcut = a key on the keyboard;
+panel = a small side box with a note and/or a word list.
+Steps:
+- {"do": "ai", "value": "what the program's own AI should do to the shown text"}  e.g. "fix the spelling"
+- {"do": "replace", "value": {"find": "old words", "replace": "new words"}}
+- {"do": "insert", "value": "words to add at the end of the text"}
+- {"do": "copy"}  (copies the shown text)
+- {"do": "save", "value": "txt" or "docx"}  (saves the shown text into the program's documents folder)
+- {"do": "open_folder"}  (opens that folder)
+- {"do": "settings", "value": { ...settings as above... }}
+- {"do": "open", "value": "settings" | "ai" | "videos" | "learned" | "update" | "addons"}
+- {"do": "tab", "value": "yi" | "en" | "he" | ...}  (shows that language's text)
+- {"do": "message", "value": "words to show in a box"}
+
+It can NOT: run code or scripts, reach the internet or other programs, send mail or messages, change how typing or the AI
+works inside, or add a new kind of part or step. If he asks for that, answer {"reply": "...why...", "too_big": true}.
+Answer with the JSON object only, no other words."""
 
 _Q = r'["\u201c\u201d\u201e\u05f4]([^"\u201c\u201d\u201e\u05f4]+)["\u201c\u201d\u201e\u05f4]'
 
@@ -303,6 +387,81 @@ def parse_chat(out):
     if ch or out.lstrip().startswith("["):
         return "", ch
     return re.sub(r"^```\w*|```$", "", out).strip(), []
+
+
+def _obj(out):
+    """The JSON object in an answer (also inside ```json fences), or {}."""
+    out = re.sub(r"<think>.*?</think>", "", out or "", flags=re.S)
+    m = re.search(r"\{.*\}", out, re.S)
+    if not m:
+        return {}
+    try:
+        obj = json.loads(m.group(0))
+    except Exception:
+        return {}
+    return obj if isinstance(obj, dict) else {}
+
+
+SETTING_KEYS = set(prefs.DEFAULTS) | {"reset", "show"}
+
+
+def parse_settings(out):
+    """The "settings" part of the AI's answer -> dict of known setting keys only (or {})."""
+    st = _obj(out).get("settings")
+    if not isinstance(st, dict):
+        return {}
+    return {k: v for k, v in st.items() if k in SETTING_KEYS and v not in (None, "", [], {})}
+
+
+def parse_answer(out):
+    """Everything in one answer: {reply, changes [(find, replace)], settings {}, addon {} or None, too_big}."""
+    reply, ch = parse_chat(out)
+    obj = _obj(out)
+    addon = obj.get("addon") if isinstance(obj.get("addon"), dict) else None
+    return {"reply": reply, "changes": ch, "settings": parse_settings(out), "addon": addon,
+            "too_big": obj.get("too_big") in (True, "true", "yes", 1)}
+
+
+# words that ask for a setting, when the AI itself left "settings" out (English and Yiddish)
+_SET_WORDS = [
+    ("font_size", "+2", r"\b(bigger|larger|enlarge|increase (the )?(font|letters|text))\b|גרעסער|גרויסער"),
+    ("font_size", "-2", r"\b(smaller|tinier|decrease (the )?(font|letters|text))\b|קלענער"),
+    ("brightness", "-20", r"\b(darker|dimmer|dim)\b|טונקעלער|פינצטערער"),
+    ("brightness", "+20", r"\b(brighter|lighter)\b|העלער|ליכטיקער"),
+    ("volume", "+20", r"\b(louder|volume up|turn up)\b|העכער|הויכער"),
+    ("volume", "-20", r"\b(quieter|softer|volume down|turn down)\b|שטילער|נידעריקער"),
+    ("theme", "dark", r"\bdark (mode|theme)\b|\bnight mode\b"),
+    ("theme", "light", r"\blight (mode|theme)\b|\bday mode\b"),
+    ("reset", True, r"\b(reset|back to normal|as it was at first)\b"),
+]
+_COLOR_RX = (r"\b(blue|red|green|yellow|orange|purple|pink|gray|grey|black|white|brown|gold|navy|teal|"
+             r"dark ?blue|dark ?green|light ?blue)\b")
+
+
+def settings_hint(message, fonts=()):
+    """Settings asked for in plain words (a safety net under the AI): -> dict like parse_settings."""
+    low = (message or "").lower()
+    st = {}
+    buttons = re.search(r"\bbuttons?\b|קנעפ", low)
+    letters = re.search(r"\b(letters?|font|text|words?)\b|אותיות|בוכשטאבן", low)
+    for key, val, rx in _SET_WORDS:
+        if key.startswith("font_size") and buttons and not letters:
+            key = "button_size"; val = "+30" if val == "+2" else "-20"
+        if key not in st and re.search(rx, low):
+            st[key] = val
+    if buttons:
+        c = re.search(r"buttons?\s+(?:to\s+|in\s+)?" + _COLOR_RX + "|" + _COLOR_RX + r"\s+buttons?|buttons?\b[^.]*?\b" +
+                      _COLOR_RX, low)
+        if c:
+            st["button_color"] = next(g for g in c.groups() if g)
+    m = re.search(r"\bai( button)?\b[^.]*?\b(left|right)\b", low)
+    if m:
+        st["ai_button_pos" if m.group(1) else "ai_side"] = m.group(2)
+    for f in sorted(fonts, key=len, reverse=True):     # a font named in the message
+        if f and f.lower() in low:
+            st["font"] = f
+            break
+    return st
 
 
 def count(text, find):

@@ -57,6 +57,7 @@ jobs:
             --exclude-module onnxruntime --exclude-module tkinter --exclude-module torch app\hafutza.py
           Copy-Item -Recurse build\models dist\HafutzaTyping\models
           Copy-Item build\hafutza.ico dist\HafutzaTyping\
+          Copy-Item -Recurse app\fonts dist\HafutzaTyping\fonts
           Set-Content -NoNewline -Encoding ascii dist\HafutzaTyping\version.txt "${{ inputs.version }}"
           curl.exe -sSL -o build\llama.zip https://github.com/ggml-org/llama.cpp/releases/download/b12503/llama-b12503-bin-win-cpu-x64.zip
           if ($LASTEXITCODE) { "llama.cpp download failed"; exit 1 }
@@ -150,6 +151,11 @@ jobs:
           $b = Start-Process -FilePath $exe -ArgumentList '--badge-test', 'file:///C:/upd/same.json', '--expect', 'plain', '--report-after', '8', '--out', 'C:\st\t12b' -PassThru -Wait
           Get-Content C:\st\t12b\report.json
           if ($a.ExitCode -ne 0 -or $b.ExitCode -ne 0) { "BLUE BUTTON TEST FAILED"; exit 1 }
+      - name: test 15 - three-dots menu, Settings (brightness, volume, font) remembered, AI makes buttons blue and bigger and moves the AI button left, Undo, Reset to normal, AI side 400 px and full window, add-on button from chat, Send to Avi (kept, then sent), Ask a different AI (mocked online AI) and paste-back
+        run: |
+          $p = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" -ArgumentList '--ui-test', '--out', 'C:\st\t15' -PassThru -Wait
+          Get-Content C:\st\t15\result.txt
+          if ($p.ExitCode -ne 0) { Get-Content C:\st\t15\report.json; "UI TEST FAILED"; exit 1 }
       - name: test 6 - a double click on the drop box opens the file browser once
         run: |
           $p = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" -ArgumentList '--click-test', "$pwd\tests\clip30.mp4", '--out', 'C:\st\t6' -PassThru -Wait
@@ -188,10 +194,10 @@ jobs:
         run: |
           python tools/run_selftest.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" tests\clip30.mp3 yi yi C:\st\t14 --download --timeout 40
           $inst = (Get-ChildItem -Recurse -File "$env:LOCALAPPDATA\Programs\Hafutza Typing" | Measure-Object Length -Sum).Sum
-          $dl = (Get-ChildItem -Recurse -File "$env:LOCALAPPDATA\HafutzaTyping\models" -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+          $dl = (Get-ChildItem -Recurse -File "$env:LOCALAPPDATA\Programs\Hafutza Typing\models" -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
           $setup = (Get-Item Output\HafutzaTyping-Setup.exe).Length
           "SIZES: setup.exe $([math]::Round($setup/1GB,2)) GB; installed program $([math]::Round($inst/1GB,2)) GB; first-start download (models folder) $([math]::Round($dl/1GB,2)) GB"
-          Get-ChildItem "$env:LOCALAPPDATA\HafutzaTyping\models" -ErrorAction SilentlyContinue | ForEach-Object { "  $($_.Name): $([math]::Round(((Get-ChildItem -Recurse -File $_.FullName | Measure-Object Length -Sum).Sum)/1GB,2)) GB" }
+          Get-ChildItem "$env:LOCALAPPDATA\Programs\Hafutza Typing\models" -ErrorAction SilentlyContinue | ForEach-Object { "  $($_.Name): $([math]::Round(((Get-ChildItem -Recurse -File $_.FullName | Measure-Object Length -Sum).Sum)/1GB,2)) GB" }
           python -c "import json; r=json.load(open(r'C:\st\t14\report.json',encoding='utf-8')); print({k: r.get(k) for k in ('all_missing_before','all_missing_after','ai_model_after','download_seconds','ok')}); exit(0 if r.get('ok') and 'ai' in r['all_missing_before'] and not r['all_missing_after'] and r.get('ai_model_after') else 1)"
       - name: test 13 - AI helper - fix words while typing 13.8 min of Yiddish (and in the English after)
         run: |

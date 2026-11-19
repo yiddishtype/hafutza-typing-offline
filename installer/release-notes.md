@@ -7,6 +7,11 @@ New in 1.5:
 - **Chat with the AI like texting**: write in the box at the bottom and press Enter. Ask for a change (fix a word, shorten a line, translate, rewrite a part, in Yiddish or English) and it **makes the change in the text right away** and says what it changed. Every change has an **Undo** button. You can also just ask it a question, and it answers in the chat.
 - **Faster AI**: it answers much quicker, also while a video is being typed (the typing waits a moment for it).
 - **One download**: after installing, the program downloads everything once, **the AI included**, with one progress bar (SIZE_TOTAL). Then it all works with no internet.
+- **The three-dots menu (⋮)** at the top: **Settings** (brightness, sound, a choice of 21 fonts for the typed words, colours, sizes and places), **AI in the full window**, **My add-ons**, **Check for update** and **Reset to normal**. Everything you set is remembered.
+- **Tell the AI how the program should look**, like *make the buttons blue and bigger and move the AI button to the left*. It changes it right away, with no internet, and every change has **Undo**.
+- **Add-ons**: ask the AI for a new button, like *a button that copies all the text*, and it builds it. Turn add-ons on or off, or delete them, under **My add-ons**.
+- **Send to Avi**: when a request is too big for the AI, it offers a **Send to Avi** button. The request goes to us (with no internet it waits and goes by itself later).
+- **Ask a different AI** (this one needs the internet): put in your own Gemini, OpenAI or Claude key (kept only on your computer), or copy a ready-made request to a free AI website and paste its answer back. The program checks the answer and applies it with **Undo**.
 
 New in 1.4:
 - **AI: fix words** (new button at the top): write what to fix, in Yiddish or English, for example *change X to Y* or *write Reb, not Rabbi*. The AI shows the word changes it suggests; untick any you don't want and press **OK**. Nothing changes without OK.
