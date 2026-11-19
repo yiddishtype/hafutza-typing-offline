@@ -42,7 +42,7 @@ try:
     from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout, QLabel,
                                    QPushButton, QRadioButton, QCheckBox, QButtonGroup, QProgressBar, QTabWidget,
                                    QPlainTextEdit, QFileDialog, QMessageBox, QGroupBox, QScrollArea, QDialog, QFrame,
-                                   QComboBox, QLineEdit)
+                                   QComboBox, QLineEdit, QSizePolicy)
 
     import engine
     import updater
@@ -88,6 +88,9 @@ QPushButton#update { font-size: 11pt; padding: 6px 12px; }
 QPushButton#update[news="true"] { background: #2f7bd0; color: white; border: 2px solid #1d5ea8; font-weight: bold; }
 QPushButton#update[news="true"]:hover { background: #2569b8; }
 """
+
+
+BALL = 58          # the round AI button on the side of the window, in pixels
 
 
 def both(en, yi):
@@ -856,13 +859,13 @@ class AIFetch(QThread):
 
 
 class AIAsk(QThread):
-    """One question to the AI, in the background. instruction None = only start the AI (warm it up)."""
+    """One chat message to the AI, in the background. instruction None = only start the AI (warm it up)."""
     done = Signal(object, str, str, float)     # changes [(find, replace)], raw answer, error, seconds
 
-    def __init__(self, server, text, instruction):
+    def __init__(self, server, text, instruction, history=()):
         super().__init__()
-        self.server, self.text, self.instruction = server, text, instruction
-        self.by = ""
+        self.server, self.text, self.instruction, self.history = server, text, instruction, list(history)
+        self.by, self.reply = "", ""
 
     def run(self):
         t = time.time()
@@ -874,7 +877,8 @@ class AIAsk(QThread):
             self.server.start()                # starting is mostly reading the file: the typing need not wait for it
             engine.HOLD.set()
             try:
-                ch, raw = self.server.ask(ai.context(self.text, self.instruction), self.instruction)
+                self.reply, ch, raw = self.server.chat(ai.context(self.text, self.instruction), self.instruction,
+                                                       self.history)
             finally:
                 engine.HOLD.clear()
             log("ai answer %.1f s: %s" % (time.time() - t, raw[:500].replace("\n", " ")))
@@ -889,67 +893,181 @@ class AIAsk(QThread):
             self.done.emit([], "", str(e), time.time() - t)
 
 
+class ChatBox(QPlainTextEdit):
+    """The box to write in: Enter sends, Shift+Enter makes a new line (like a texting app)."""
+    enter = Signal()
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key_Return, Qt.Key_Enter) and not (e.modifiers() & Qt.ShiftModifier):
+            self.enter.emit()
+            return
+        super().keyPressEvent(e)
+
+
 class AIDialog(QDialog):
-    """Write what to fix (English or Yiddish); the AI suggests word changes; tick them and press OK.
-    Not modal: the typing goes on while it is open. Nothing changes in the text without OK."""
+    """The AI chat in the side panel (the AI ball opens it). He writes like a text message, in Yiddish or English;
+    the AI texts back. When he asks for a change, the AI makes it in the text at once and says what it changed,
+    with an Undo button. Questions get plain answers. The typing goes on while it is open."""
 
     def __init__(self, win):
         super().__init__(win)
-        self.win, self.th, self.fetch, self.kb, self.changes, self.boxes = win, None, None, None, [], []
-        self.setWindowTitle(TITLE + " - AI: fix words")
-        self.setMinimumWidth(720)
+        self.win, self.th, self.fetch, self.kb = win, None, None, None
+        self.changes, self.records, self.history, self.thinking = [], [], [], None
+        self.setWindowTitle(TITLE + " - AI chat")
+        self.setWindowFlags(Qt.Widget)      # lives in the side panel of the main window
         self.setModal(False)
+        self.setObjectName("aichat")
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.setStyleSheet(
+            "QFrame#me { background: #6a3fd0; border-radius: 14px; }"
+            " QFrame#me QLabel { color: white; }"
+            " QFrame#bot { background: #e9ebf0; border-radius: 14px; }"
+            " QFrame#bot QLabel { color: #1d2430; }"
+            " QFrame#chg { background: #e4f4e8; border: 1px solid #9fd3ad; border-radius: 14px; }"
+            " QFrame#chg QLabel { color: #14361f; }"
+            " QPushButton#undo { min-height: 26px; padding: 2px 12px; font-size: 10pt; }"
+            " QPushButton#send { background: #6a3fd0; color: white; font-size: 16pt; border-radius: 20px;"
+            "   min-height: 0; min-width: 0; padding: 0; }"
+            " QPushButton#send:disabled { background: #b9aee0; }")
         lay = QVBoxLayout(self)
-        t = QLabel(both("Write what to fix, in Yiddish or English. For example: change אמונה to עמונה,  or: write Reb not Rabbi.\n"
-                        "The AI shows the changes; nothing changes until you press OK. It works on this computer, no internet.",
-                        "שרייבט וואס צו פארריכטן, אויף אידיש אדער ענגליש. דער AI ווייזט די ענדערונגען; גארנישט טוישט זיך ביז איר דרוקט OK."))
-        t.setWordWrap(True)
-        lay.addWidget(t)
-        prow = QHBoxLayout()
-        prow.addWidget(QLabel("Fix the text in:  -  פארריכטן דעם טעקסט אין:"))
-        self.lang = QComboBox(); self.lang.setMinimumHeight(40)
-        prow.addWidget(self.lang, 1)
-        lay.addLayout(prow)
-        self.log = QPlainTextEdit(); self.log.setReadOnly(True); self.log.setMinimumHeight(110)
-        lay.addWidget(self.log)
-        self.box = QPlainTextEdit(); self.box.setMaximumHeight(90)
-        f = self.box.font(); f.setPointSize(15); self.box.setFont(f)
-        lay.addWidget(self.box)
-        krow = QHBoxLayout()
-        self.kb_btn = QPushButton(both("Show the Yiddish keyboard", "אידישע קלאוויאטור"))
-        self.kb_btn.clicked.connect(self.toggle_kb)
-        self.send_btn = QPushButton(both("Ask the AI", "פרעגן דעם AI")); self.send_btn.setObjectName("start")
-        self.send_btn.clicked.connect(self.send)
-        krow.addWidget(self.kb_btn, 1); krow.addWidget(self.send_btn, 2)
-        lay.addLayout(krow)
-        self.kb_spot = QVBoxLayout(); lay.addLayout(self.kb_spot)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(6)
+        top = QHBoxLayout()
+        h = QLabel("AI")
+        f = h.font(); f.setPointSize(16); f.setBold(True); h.setFont(f)
+        top.addWidget(h)
+        top.addWidget(QLabel("  " + both("chat", "שמועס")))
+        top.addStretch(1)
+        self.x_btn = QPushButton("✕"); self.x_btn.setObjectName("aix")
+        self.x_btn.setToolTip("Close the AI side  -  צומאכן")
+        self.x_btn.setFixedSize(40, 40)
+        self.x_btn.clicked.connect(self.reject)
+        top.addWidget(self.x_btn)
+        lay.addLayout(top)
+        lrow = QHBoxLayout()
+        lrow.addWidget(QLabel(both("Text:", "טעקסט:")))
+        self.lang = QComboBox(); self.lang.setMinimumHeight(34)
+        lrow.addWidget(self.lang, 1)
+        lay.addLayout(lrow)
+        # the conversation
+        self.chat = QScrollArea(); self.chat.setWidgetResizable(True)
+        self.chat.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.chat.setFrameShape(QFrame.NoFrame)
+        self.chat.setStyleSheet("QScrollArea#chatarea { background: white; border: 1px solid #d5d9e0; border-radius: 8px; }")
+        self.chat.setObjectName("chatarea")
+        inner = QWidget(); inner.setObjectName("chatin"); inner.setStyleSheet("QWidget#chatin { background: white; }")
+        self.msgs = QVBoxLayout(inner)
+        self.msgs.setContentsMargins(8, 8, 8, 8); self.msgs.setSpacing(8)
+        self.msgs.addStretch(1)
+        self.chat.setWidget(inner)
+        self.chat.setMinimumHeight(220)
+        self.chat.verticalScrollBar().rangeChanged.connect(
+            lambda _a, b: self.chat.verticalScrollBar().setValue(b))
+        lay.addWidget(self.chat, 1)
         self.status = QLabel(""); self.status.setWordWrap(True)
         lay.addWidget(self.status)
         self.bar = QProgressBar(); self.bar.setRange(0, 1000); self.bar.hide()
         lay.addWidget(self.bar)
-        self.list_box = QGroupBox("Suggested changes  -  פארגעשלאגענע ענדערונגען")
-        self.list_lay = QVBoxLayout(self.list_box)
-        self.list_box.hide()
-        lay.addWidget(self.list_box)
-        self.remember = QCheckBox(both("Also remember these for the next videos (Learned words)", "געדענקען אויך פאר די קומענדיגע ווידעאס"))
-        self.remember.hide()
-        lay.addWidget(self.remember)
-        brow = QHBoxLayout()
-        self.ok_btn = QPushButton("OK  -  פארריכטן"); self.ok_btn.setObjectName("start")
-        self.ok_btn.clicked.connect(self.apply)
-        self.no_btn = QPushButton(both("Don't change", "נישט טוישן"))
-        self.no_btn.clicked.connect(self.clear_changes)
-        self.ok_btn.hide(); self.no_btn.hide()
-        brow.addWidget(self.ok_btn, 2); brow.addWidget(self.no_btn, 1)
-        lay.addLayout(brow)
         self.dl_btn = QPushButton(both("Download the AI (2.7 GB, one time)", "אראפנעמען דעם AI (2.7 GB, איין מאל)"))
         self.dl_btn.setObjectName("choose")
         self.dl_btn.clicked.connect(self.download)
         lay.addWidget(self.dl_btn)
+        # the box to write in, at the bottom
+        self.kb_spot = QVBoxLayout(); lay.addLayout(self.kb_spot)
+        brow = QHBoxLayout(); brow.setSpacing(6)
+        self.kb_btn = QPushButton("א"); self.kb_btn.setFixedSize(40, 40)
+        self.kb_btn.setToolTip("Yiddish keyboard  -  אידישע קלאוויאטור")
+        self.kb_btn.clicked.connect(self.toggle_kb)
+        brow.addWidget(self.kb_btn, 0, Qt.AlignBottom)
+        self.box = ChatBox(); self.box.setFixedHeight(64)
+        self.box.setPlaceholderText("Write to the AI ...  שרייבט צום AI")
+        f = self.box.font(); f.setPointSize(13); self.box.setFont(f)
+        self.box.enter.connect(self.send)
+        brow.addWidget(self.box, 1)
+        self.send_btn = QPushButton("➤"); self.send_btn.setObjectName("send"); self.send_btn.setFixedSize(40, 40)
+        self.send_btn.setToolTip("Send  -  שיקן")
+        self.send_btn.clicked.connect(self.send)
+        brow.addWidget(self.send_btn, 0, Qt.AlignBottom)
+        lay.addLayout(brow)
+        self.remember = QCheckBox(both("Remember for next videos", "געדענקען פאר ווייטער"))
+        self.remember.setToolTip("Also use these changes when typing the next videos")
+        lay.addWidget(self.remember)
         self.close_btn = QPushButton(both("Close", "צומאכן"))
-        self.close_btn.clicked.connect(self.close)
+        self.close_btn.clicked.connect(self.reject)
         lay.addWidget(self.close_btn)
+        self.bubble("bot", both("Hi! Ask me anything about the typed text, or tell me what to change, in Yiddish or "
+                                "English. For example: change אמונה to עמונה,  write Reb not Rabbi,  shorten the first line. "
+                                "I make the change right away; every change has an Undo button. I work on this computer, no internet.",
+                                "שרייבט מיר וואס צו טוישן אדער פרעגט א שאלה; איך טוישט גלייך, מיט אן Undo קנעפל"))
         self.refresh()
+
+    # -- the bubbles
+    def bubble(self, who, text, extra=None):
+        """who: 'me' (his message, right, purple), 'bot' (the AI, left, grey) or 'chg' (a change made, left, green)."""
+        fr = QFrame(); fr.setObjectName(who)
+        v = QVBoxLayout(fr); v.setContentsMargins(12, 8, 12, 8); v.setSpacing(4)
+        lb = QLabel(text); lb.setWordWrap(True)
+        lb.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        f = lb.font(); f.setPointSize(12); lb.setFont(f)
+        rtl = sum(1 for c in text if "֐" <= c <= "׿") > len(text) / 3
+        lb.setAlignment(Qt.AlignRight if rtl else Qt.AlignLeft)
+        v.addWidget(lb)
+        if extra is not None:
+            v.addWidget(extra, 0, Qt.AlignLeft)
+        maxw = self.bubble_max()
+        fr.setMaximumWidth(maxw)
+        fr.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+        fm = lb.fontMetrics()
+        lb.setMinimumWidth(min(max(fm.horizontalAdvance(ln) for ln in text.split("\n")) + 6, maxw - 26))
+        row = QHBoxLayout(); row.setContentsMargins(0, 0, 0, 0)
+        if who == "me":
+            row.addStretch(1); row.addWidget(fr)
+        else:
+            row.addWidget(fr); row.addStretch(1)
+        holder = QWidget(); holder.setLayout(row)
+        self.msgs.addWidget(holder)
+        fr.label = lb
+        return fr
+
+    def bubble_max(self):
+        # never wider than the panel itself allows (the viewport can report a stale, wider size before layout)
+        cap = self.win.ai_panel_width() - 60
+        vw = self.chat.viewport().width()
+        w = min(vw, cap) if vw > 150 else cap
+        return max(160, int(w * 0.86))
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        maxw = self.bubble_max()
+        for i in range(self.msgs.count()):
+            w = self.msgs.itemAt(i).widget()
+            if w is not None:
+                for fr in w.findChildren(QFrame):
+                    if fr.objectName() in ("me", "bot", "chg"):
+                        fr.setMaximumWidth(maxw)
+                        fm = fr.label.fontMetrics()
+                        fr.label.setMinimumWidth(min(max(fm.horizontalAdvance(ln) for ln in fr.label.text().split("\n")) + 6,
+                                                     maxw - 26))
+
+    def transcript(self):
+        """The whole conversation as plain text (for the test report)."""
+        out = []
+        for i in range(self.msgs.count()):
+            w = self.msgs.itemAt(i).widget()
+            if w is None:
+                continue
+            for fr in w.findChildren(QFrame):
+                if fr.objectName() in ("me", "bot", "chg"):
+                    out.append({"me": "You", "bot": "AI", "chg": "AI (change)"}[fr.objectName()] + ": " + fr.label.text())
+        return "\n".join(out)
+
+    @property
+    def log(self):          # older name used by tests
+        class _L:
+            def __init__(s, d): s.d = d
+            def toPlainText(s): return s.d.transcript()
+        return _L(self)
 
     # -- what is there
     def refresh(self):
@@ -966,7 +1084,7 @@ class AIDialog(QDialog):
         have = ai.model_file() is not None
         exe = ai.server_exe() is not None
         self.dl_btn.setVisible(not have and exe and self.fetch is None)
-        self.send_btn.setEnabled(have and exe and self.th is None and self.lang.count() > 0)
+        self.send_btn.setEnabled(have and exe and self.th is None)
         was = getattr(self, "problem", False)
         self.problem = True
         if not exe:
@@ -981,9 +1099,6 @@ class AIDialog(QDialog):
             self.status.setText(both("The AI is not downloaded yet (2.7 GB, one time; it normally comes with the first download). After that it "
                                      "works with no internet. The rest of the program works without it." + warn,
                                      "דער AI איז נאך נישט אראפגענומען (2.7 GB, איין מאל)"))
-        elif self.lang.count() == 0:
-            self.status.setText(both("There is no text yet. Type a video first (or wait for the first lines).",
-                                     "נאך קיין טעקסט נישטא"))
         else:
             self.problem = False
             if was:
@@ -992,16 +1107,12 @@ class AIDialog(QDialog):
     def toggle_kb(self):
         if self.kb is None:
             import player
-            self.kb = player.Keyboard()
+            self.kb = player.Keyboard(compact=True)
             self.kb.typed.connect(lambda c: (self.box.insertPlainText(c), self.box.setFocus()))
             self.kb.back.connect(lambda: self.box.textCursor().deletePreviousChar())
             self.kb_spot.addWidget(self.kb)
-            self.kb_btn.setText(both("Hide the keyboard", "באהאלטן די קלאוויאטור"))
             return
-        show = not self.kb.isVisible()
-        self.kb.setVisible(show)
-        self.kb_btn.setText(both("Hide the keyboard", "באהאלטן די קלאוויאטור") if show
-                            else both("Show the Yiddish keyboard", "אידישע קלאוויאטור"))
+        self.kb.setVisible(not self.kb.isVisible())
 
     # -- download
     def download(self):
@@ -1022,12 +1133,12 @@ class AIDialog(QDialog):
         self.bar.hide()
         self.refresh()
         if ok:
-            self.status.setText(both("✓ The AI is ready. Write what to fix and press Ask the AI.", "✓ דער AI איז גרייט"))
+            self.status.setText(both("✓ The AI is ready. Write to it below.", "✓ דער AI איז גרייט"))
         elif msg != "stopped":
             self.status.setText(both("The download did not finish: %s\nPress the button again to go on where it stopped." % msg,
                                      "עס האט נישט געענדיגט"))
 
-    # -- ask
+    # -- chat
     def warm(self):
         """Start the AI in the background now, so the first answer comes quicker."""
         if self.th is None and ai.model_file() and ai.server_exe() and not self.win.ai_server.running():
@@ -1040,86 +1151,108 @@ class AIDialog(QDialog):
     def warmed(self, ch, raw, err, secs):
         self.th.wait(); self.th = None
         log("ai warm-up %.1f s %s" % (secs, err))
-        self.status.setText(both("The AI could not start: " + err, "דער AI האט נישט אנגעהויבן") if err else
-                            both("✓ The AI is ready.", "✓ דער AI איז גרייט"))
+        self.status.setText(both("The AI could not start: " + err, "דער AI האט נישט אנגעהויבן") if err else "")
         self.refresh()
 
     def send(self, _=None, text=None):
         instr = (text if text is not None else self.box.toPlainText()).strip()
+        if not instr or self.th is not None:
+            return False
+        if not (ai.model_file() and ai.server_exe()):
+            self.refresh()
+            return False
+        self.refresh()
         lang = self.lang.currentData()
-        if not instr or not lang or self.th is not None:
-            return False
-        src = self.win.ai_text(lang)
-        if not src.strip():
-            self.status.setText(both("There is no text in this language yet.", "נאך קיין טעקסט נישטא"))
-            return False
-        self.clear_changes()
-        self.ask_lang = lang
-        self.log.appendPlainText("You: " + instr)
+        src = self.win.ai_text(lang) if lang else ""
+        self.bubble("me", instr)
         self.box.clear()
+        if not src.strip():
+            self.bubble("bot", both("There is no typed text yet. Type a video first (or wait for the first lines), "
+                                    "then I can work on it.", "נאך קיין טעקסט נישטא"))
+            return False
+        self.changes = []
+        self.ask_lang = lang
         self.send_btn.setEnabled(False)
-        self.status.setText(both("The AI is thinking ... (usually 10-40 seconds%s)" %
-                                 ("; the first time it also starts up" if not self.win.ai_server.running() else ""),
-                                 "דער AI טראכט ..."))
-        self.bar.setRange(0, 0); self.bar.show()
-        self.th = AIAsk(self.win.ai_server, src, instr)
+        self.thinking = self.bubble("bot", "…  " + both("thinking%s" % (", starting up the first time" if not
+                                                         self.win.ai_server.running() else ""), "טראכט"))
+        self.th = AIAsk(self.win.ai_server, src, instr, self.history)
         self.th.done.connect(self.answered)
         self.th.start()
         return True
 
     def answered(self, ch, raw, err, secs):
-        self.th.wait(); self.last_by = self.th.by; self.th = None
-        self.bar.hide(); self.bar.setRange(0, 1000)
-        self.last_seconds = secs
+        self.th.wait(); self.last_by = self.th.by; reply = self.th.reply; instr = self.th.instruction; self.th = None
+        self.last_seconds, self.last_reply = secs, reply
+        if self.thinking is not None:
+            self.thinking.parentWidget().setParent(None); self.thinking = None
         self.refresh()
         if err:
-            self.log.appendPlainText("AI: (did not work: %s)" % err)
-            self.status.setText(both("The AI did not answer: " + err, "דער AI האט נישט געענטפערט"))
+            self.bubble("bot", "(" + both("That did not work: ", "עס האט נישט געארבעט: ") + err + ")")
             return
-        text = self.win.ai_text(self.ask_lang)
+        lang = self.ask_lang
+        text = self.win.ai_text(lang)
         typing = self.win.job is not None
-        self.changes = []
-        for f, r in ch:
-            n = text.count(f)
-            if n or typing:        # while typing runs, a word may still come in later lines
-                self.changes.append((f, r, n))
-        if not self.changes:
-            self.log.appendPlainText("AI: no change to suggest.")
-            self.status.setText(both("The AI found nothing to change for that. Try naming the exact word, "
-                                     "like: change X to Y.", "דער AI האט נישט געפונען וואס צו טוישן"))
-            return
-        self.log.appendPlainText("AI: %d change(s) suggested (%.0f s)." % (len(self.changes), secs))
-        for f, r, n in self.changes:
-            where = ("%d place(s)" % n) if n else "not in the text yet; will be fixed when it comes"
-            b = QCheckBox("%s   →   %s     (%s)" % (f, r, where))
-            b.setChecked(True)
-            b.setLayoutDirection(Qt.RightToLeft if self.ask_lang in RTL else Qt.LeftToRight)
-            self.list_lay.addWidget(b)
-            self.boxes.append(b)
-        self.list_box.show(); self.remember.show(); self.ok_btn.show(); self.no_btn.show()
-        self.status.setText(both("Untick any you don't want, then press OK.", "נעמט אראפ דעם צייכן פון וואס איר ווילט נישט, און דרוקט OK"))
+        todo = [(f, r) for f, r in ch if text.count(f) or typing]   # while typing runs, a word may still come later
+        missing = [f for f, r in ch if (f, r) not in todo]
+        if todo:
+            before = self.win.ai_text(lang)
+            n = self.win.ai_apply(lang, todo, remember=self.remember.isChecked())
+            self.changes = [(f, r, text.count(f)) for f, r in todo]
+            rec = {"lang": lang, "changes": todo, "places": n, "before": before, "after": self.win.ai_text(lang),
+                   "path": self.win.shown_path(), "undone": False, "remember": self.remember.isChecked()}
+            self.records.append(rec)
+            self.last_applied = (lang, todo, n)
+            lines = []
+            for f, r, k in self.changes:
+                lines.append("%s  →  %s   (%s)" % (short(f), short(r), ("%d×" % k) if k else
+                                                    both("when it comes", "ווען עס קומט")))
+            say = reply or both("Done.", "געטוישט.")
+            undo = QPushButton("↶ " + both("Undo", "צוריק")); undo.setObjectName("undo")
+            fr = self.bubble("chg", say + "\n" + "\n".join(lines) +
+                             ("\n" + both("Later lines get it too as they are typed.", "") if typing else ""), undo)
+            undo.clicked.connect(lambda _=False, rec=rec, b=undo: self.undo(rec, b))
+            rec["button"] = undo
+            log("ai chat applied %s: %d places" % (todo, n))
+        else:
+            if ch and missing:
+                say = (reply + "\n" if reply else "") + both("(I could not find that in the text: ", "(נישט געפונען: ") + \
+                      ", ".join(short(f) for f in missing) + ")"
+            else:
+                say = reply or both("I am not sure what to change. Try naming the exact words, like: change X to Y.",
+                                    "נישט זיכער וואס צו טוישן")
+            self.bubble("bot", say)
+        self.history.append((instr, reply or ""))
 
-    def clear_changes(self):
-        for b in self.boxes:
-            b.setParent(None); b.deleteLater()
-        self.boxes, self.changes = [], []
-        self.list_box.hide(); self.remember.hide(); self.ok_btn.hide(); self.no_btn.hide()
+    def undo(self, rec, btn=None):
+        if rec.get("undone"):
+            return 0
+        n = self.win.ai_undo(rec)
+        rec["undone"] = True
+        if btn is not None:
+            btn.setEnabled(False); btn.setText("Undone · צוריק")
+        self.bubble("bot", "Undone · צוריק:  " + ", ".join("%s → %s" % (short(r), short(f)) for f, r in rec["changes"]))
+        return n
 
     def apply(self):
-        pick = [(f, r) for (f, r, _n), b in zip(self.changes, self.boxes) if b.isChecked()]
-        lang = self.ask_lang
-        n = self.win.ai_apply(lang, pick, remember=self.remember.isChecked())
-        self.log.appendPlainText("Done: %d change(s), %d place(s) fixed%s." %
-                                 (len(pick), n, "; later lines are fixed as they come" if self.win.job else ""))
-        self.clear_changes()
-        self.status.setText(both("✓ Fixed. Write the next fix, or Close.", "✓ פארריכט"))
-        self.last_applied = (lang, pick, n)
-        return n
+        """Older flow (the test's): the changes are already made when the answer comes. -> places changed."""
+        return self.last_applied[2] if getattr(self, "last_applied", None) else 0
+
+    def clear_changes(self):
+        self.changes = []
+
+    def reject(self):
+        """Close / ✕ / Esc: fold the side panel away (a download or an answer on the way goes on)."""
+        self.win.show_ai(False)
 
     def closeEvent(self, e):
         if self.fetch:
             self.fetch.stop(); self.fetch.wait(); self.fetch = None
         super().closeEvent(e)
+
+
+def short(s, most=60):
+    s = " ".join(s.split())
+    return s if len(s) <= most else s[:most - 1] + "…"
 
 
 class Window(QMainWindow):
@@ -1304,8 +1437,103 @@ class Window(QMainWindow):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setWidget(body)
-        self.setCentralWidget(scroll)
+        lay.setContentsMargins(lay.contentsMargins().left(), lay.contentsMargins().top(), BALL + 18,
+                               lay.contentsMargins().bottom())     # room for the AI ball on the right side
+        # the AI side: a panel about 4 inches wide on the right, opened and closed by the round AI ball
+        self.ai_panel = QScrollArea()
+        self.ai_panel.setObjectName("aipanel")
+        self.ai_panel.setWidgetResizable(True)
+        self.ai_panel.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.ai_panel.setStyleSheet("QScrollArea#aipanel { border: none; border-left: 2px solid #c8ccd2; background: #f7f9fc; }")
+        self.ai_panel.hide()
+        central = QWidget()
+        cl = QHBoxLayout(central); cl.setContentsMargins(0, 0, 0, 0); cl.setSpacing(0)
+        cl.addWidget(scroll, 1)
+        cl.addWidget(self.ai_panel)
+        self.setCentralWidget(central)
+        self.ai_ball = QPushButton("AI", central)
+        self.ai_ball.setObjectName("aiball")
+        self.ai_ball.setToolTip("Open the AI at the side  -  עפענען דעם AI")
+        self.ai_ball.setCursor(Qt.PointingHandCursor)
+        self.ai_ball.setFixedSize(BALL, BALL)
+        self.ai_ball.setStyleSheet(
+            "QPushButton#aiball { background: #6a3fd0; color: white; font-size: 15pt; font-weight: bold; border: 3px solid white;"
+            " border-radius: %dpx; min-height: 0; min-width: 0; padding: 0; }"
+            " QPushButton#aiball:hover { background: #5631b0; }"
+            " QPushButton#aiball[open=\"true\"] { background: #3d2380; }" % (BALL // 2))
+        self.ai_ball.clicked.connect(lambda: self.show_ai(not self.ai_panel.isVisible()))
+        self.ai_ball.raise_()
         self.resize(1000, 900)
+
+    # -- the AI ball and side panel
+    def ai_panel_width(self):
+        """About 4 inches on this screen (real inches when the screen says its size), kept to a sensible part of the window."""
+        w = 384
+        try:
+            scr = self.screen()
+            dpi = scr.physicalDotsPerInchX() if scr else 0
+            if 70 <= dpi <= 400:
+                w = int(round(4 * dpi / max(scr.devicePixelRatio(), 1.0)))   # 4 real inches, in the window's own pixels
+        except Exception:
+            pass
+        return max(340, min(w, 560))
+
+    def place_ball(self):
+        c = self.centralWidget()
+        if c is None or not hasattr(self, "ai_ball"):
+            return
+        if self.ai_panel.isVisible():
+            x = self.ai_panel.x() - BALL // 2           # sits on the panel's edge
+        else:
+            sb = self.scroll.verticalScrollBar()
+            x = c.width() - BALL - 6 - (sb.width() if sb.isVisible() else 0)
+        self.ai_ball.move(max(0, x), max(0, (c.height() - BALL) // 2))
+        self.ai_ball.raise_()
+
+    def show_ai(self, show=True):
+        """Open (or fold away) the AI at the right side of the window. -> the AI panel's content."""
+        if self.ai_dlg is None:
+            self.ai_dlg = AIDialog(self)
+            self.ai_panel.setWidget(self.ai_dlg)
+        if show == self.ai_panel.isVisible():
+            if show:
+                self.ai_dlg.refresh()
+            self.place_ball()
+            return self.ai_dlg
+        w = self.ai_panel_width()
+        self.ai_panel.setFixedWidth(w)
+        grow = not (self.isMaximized() or self.isFullScreen())
+        if show:
+            self.ai_dlg.refresh()
+            self.ai_dlg.show()
+            self.ai_panel.show()
+            if grow:     # make the window wider so the typing view keeps its size, as far as the screen allows
+                scr = self.screen().availableGeometry() if self.screen() else None
+                nw = self.width() + w
+                if scr is not None:
+                    nw = min(nw, scr.width())
+                    if self.x() + nw > scr.right():
+                        self.move(max(scr.left(), scr.right() - nw), self.y())
+                self.resize(nw, self.height())
+            self.ai_dlg.box.setFocus()
+            self.ai_dlg.warm()
+        else:
+            self.ai_panel.hide()
+            if grow and self.width() - w >= 700:
+                self.resize(self.width() - w, self.height())
+        self.ai_ball.setProperty("open", "true" if show else "false")
+        self.ai_ball.style().unpolish(self.ai_ball); self.ai_ball.style().polish(self.ai_ball)
+        self.ai_ball.setToolTip("Close the AI side  -  צומאכן" if show else "Open the AI at the side  -  עפענען דעם AI")
+        QTimer.singleShot(0, self.place_ball)
+        return self.ai_dlg
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        QTimer.singleShot(0, self.place_ball)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        QTimer.singleShot(0, self.place_ball)
 
     def fit_screen(self):
         """Show the window whole on a small laptop screen: there it opens filling the screen."""
@@ -1493,12 +1721,7 @@ class Window(QMainWindow):
 
     # -- the AI helper
     def open_ai(self):
-        if self.ai_dlg is None:
-            self.ai_dlg = AIDialog(self)
-        self.ai_dlg.refresh()
-        self.ai_dlg.show(); self.ai_dlg.raise_(); self.ai_dlg.activateWindow()
-        self.ai_dlg.warm()
-        return self.ai_dlg
+        return self.show_ai(True)
 
     def ai_langs(self):
         """The languages there is text in now (the spoken one while it is being typed too)."""
@@ -1554,6 +1777,52 @@ class Window(QMainWindow):
                     learn.add("speech" if lang == spoken else "tr", lang, f, r)
                 except Exception as e:
                     log("ai remember failed %r" % e)
+        return n
+
+    def ai_undo(self, rec):
+        """Undo one change the AI chat made: the text goes back as it was (lines typed since keep their own words),
+        and lines still to come are no longer changed. -> places changed back."""
+        lang, changes = rec["lang"], rec["changes"]
+        rev = [(r, f) for f, r in reversed(changes) if r]
+        log("ai undo %s %r" % (lang, changes))
+        n = 0
+        if self.job:
+            self.ai_rules.setdefault(lang, []).extend(rev)      # same road as a change: the job undoes it in its lines
+            if lang == self.run_spoken:
+                self.show_partial(self.partial_raw)
+        path = rec.get("path") or self.shown_path()
+        tab = self.tabs_by_lang.get(lang)
+        if tab and tab.edit.toPlainText():
+            cur = tab.edit.toPlainText()
+            if cur == rec.get("after") and rec.get("before") is not None and path == self.shown_path():
+                new, k = rec["before"], sum(cur.count(r) for _f, r in changes)
+            else:
+                new, k = ai.apply(cur, rev)
+            if new != cur:
+                tab.edit.setPlainText(new)
+                if path in self.results:
+                    self.results[path][lang] = new
+                try:
+                    d = os.path.join(docs_dir(), "Hafutza Typing")
+                    os.makedirs(d, exist_ok=True)
+                    write_text(os.path.join(d, self.file_name(lang, path)), new)
+                except Exception as e:
+                    log("ai undo autosave failed %r" % e)
+            n = max(n, k)
+        if not self.job and path:
+            try:
+                self.ai_fix_project(path, {lang: rev})
+            except Exception:
+                log("ai undo project failed: " + traceback.format_exc())
+        if rec.get("remember"):          # it was also remembered for the next videos: forget it again
+            try:
+                kind = "speech" if lang == getattr(self, "run_spoken", None) else "tr"
+                pairs = {(" ".join(f.split()), " ".join(r.split())) for f, r in changes}
+                items = learn.load()["items"]
+                learn.remove([i for i, it in enumerate(items) if it["kind"] == kind and it["lang"] == lang
+                              and (it["wrong"], it["right"]) in pairs])
+            except Exception as e:
+                log("ai undo forget failed %r" % e)
         return n
 
     def ai_fix_project(self, path, rules):
@@ -2265,9 +2534,40 @@ def ai_test(app, win, a):
         for c, b in win.target_box.items():
             b.setChecked(c in targets)
         shot(win, "ai-0-window")
+        # the AI ball on the side: one click opens the AI panel (about 4 inches), another folds it away
+        side = rep["side"] = {"ball_visible": win.ai_ball.isVisible(), "panel_open_at_start": win.ai_panel.isVisible()}
+        w0 = win.width()
+        win.ai_ball.click(); app.processEvents(); app.processEvents()
+        side["opened_by_ball"] = win.ai_panel.isVisible()
+        side["panel_px"] = win.ai_panel.width()
+        side["expected_px"] = win.ai_panel_width()
+        scr = win.screen()
+        side["screen_dpi"] = round(scr.physicalDotsPerInchX(), 1) if scr else None
+        side["logical_dpi"] = round(scr.logicalDotsPerInchX(), 1) if scr else None
+        side["window_px"] = [w0, win.width()]
+        side["typing_view_px"] = win.scroll.width()
+        side["avail_px"] = scr.availableGeometry().width() if scr else 0
+        g = win.ai_ball.geometry()
+        side["ball_inside"] = win.centralWidget().rect().contains(g)
+        side["ball_xy"] = [g.x(), g.y()]
+        shot(win, "ai-side-open")
+        win.ai_ball.click(); app.processEvents(); app.processEvents()
+        side["closed_by_ball"] = not win.ai_panel.isVisible()
+        shot(win, "ai-side-closed")
+        win.ai_dlg.close_btn.click(); app.processEvents()      # Close while folded: stays folded
         d = win.open_ai()
-        app.processEvents()
+        app.processEvents(); app.processEvents()
+        side["reopened"] = win.ai_panel.isVisible()
+        side["ok"] = bool(side["ball_visible"] and not side["panel_open_at_start"] and side["opened_by_ball"]
+                          and side["closed_by_ball"] and side["reopened"] and side["ball_inside"]
+                          and 330 <= side["panel_px"] <= 570 and side["typing_view_px"] >= 380
+                          and (side["window_px"][1] >= side["window_px"][0] + side["panel_px"] - 2
+                               or side["window_px"][1] >= side["avail_px"] - 24))
+        note("AI side panel: %s" % side)
+        if not side["ok"]:
+            rep["error"] = "the AI ball / side panel did not work"; finish(10); return
         shot(d, "ai-1-dialog")
+        shot(win, "ai-1-window")
         rep["button"] = win.ai_btn.isVisible() and win.ai_btn.text()
         rep["download_offer"] = d.dl_btn.isVisible()
         rep["dialog_status"] = d.status.text()
@@ -2394,6 +2694,7 @@ def ai_test(app, win, a):
         d = win.ai_dlg
         d.refresh()
         d.lang.setCurrentIndex(d.lang.findData(tl))
+        st["tr_text_before"] = ttxt
         instr = 'טוישט "%s" אויף "Hafutza"' % w
         rep["tr_instruction"] = instr
         note("asking in Yiddish about the %s text: %s" % (tl, instr))
@@ -2431,7 +2732,47 @@ def ai_test(app, win, a):
         rep["tr_ok"] = (n > 0 and c["tab_old"] == 0 and c["project_old"] == 0 and c["docs_old"] == 0
                         and c["tab_new"] > 0 and c["project_new"] > 0 and c["docs_new"] > 0)
         note("translation fix check %s" % c)
-        good = rep["yi_ok"] and rep["tr_ok"] and rep.get("typing_when_ok_pressed")
+        # Undo in the chat: the translation goes back exactly as it was, files too
+        st["tr_before"] = ttxt0 = st.get("tr_text_before", "")
+        rec = d.records[-1] if d.records else None
+        if rec is None:
+            rep["error"] = "no change record to undo"; finish(12); return True
+        d.undo(rec, rec.get("button"))
+        app.processEvents()
+        tab2 = win.tabs_by_lang[tl].edit.toPlainText()
+        pr2 = project.load(win.path_last) or {"segments": []}
+        ptxt2 = project.text_of(pr2, tl)
+        rep["undo_check"] = {"tab_same_as_before": tab2 == ttxt0, "tab_old_back": tab2.count(w),
+                             "tab_new_left": tab2.count(r), "project_old_back": ptxt2.count(w),
+                             "project_new_left": ptxt2.count(r), "button": rec["button"].text()}
+        rep["undo_ok"] = bool(tab2 == ttxt0 and tab2.count(r) == 0 and ptxt2.count(r) == 0 and ptxt2.count(w) > 0)
+        shot(d, "ai-7-undo")
+        note("undo check %s" % rep["undo_check"])
+        # a plain question: a chat answer, and the text stays as it is
+        st["q_text"] = tab2
+        q = "What is this text about? Answer in one short sentence."
+        rep["q_message"] = q
+        st["ask_t"] = time.time()
+        if not d.send(text=q):
+            rep["error"] = "could not ask (3)"; finish(8); return True
+        every(500, q_answered)
+        return True
+
+    def q_answered():
+        d = win.ai_dlg
+        if d.th is not None:
+            return False
+        tl = st["tl"]
+        rep["q_answer_seconds"] = round(time.time() - st["ask_t"], 1)
+        rep["q_reply"] = getattr(d, "last_reply", "")
+        rep["q_changes"] = [list(c) for c in d.changes]
+        same = win.tabs_by_lang[tl].edit.toPlainText() == st["q_text"]
+        rep["q_ok"] = bool(rep["q_reply"].strip()) and not d.changes and same
+        rep["chat_transcript"] = d.transcript()
+        shot(d, "ai-8-chat")
+        shot(win, "ai-9-window-chat")
+        note("question answered in %.0f s: %r (text unchanged %s)" % (rep["q_answer_seconds"], rep["q_reply"], same))
+        good = rep["yi_ok"] and rep["tr_ok"] and rep.get("typing_when_ok_pressed") and rep["undo_ok"] and rep["q_ok"]
         finish(0 if good else 1)
         return True
 

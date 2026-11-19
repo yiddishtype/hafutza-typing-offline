@@ -187,6 +187,11 @@ jobs:
       - name: test 14 - one download - the program's own one-time download brings the AI too (2.7 GB), then types a clip
         run: |
           python tools/run_selftest.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" tests\clip30.mp3 yi yi C:\st\t14 --download --timeout 40
+          $inst = (Get-ChildItem -Recurse -File "$env:LOCALAPPDATA\Programs\Hafutza Typing" | Measure-Object Length -Sum).Sum
+          $dl = (Get-ChildItem -Recurse -File "$env:LOCALAPPDATA\HafutzaTyping\models" -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+          $setup = (Get-Item Output\HafutzaTyping-Setup.exe).Length
+          "SIZES: setup.exe $([math]::Round($setup/1GB,2)) GB; installed program $([math]::Round($inst/1GB,2)) GB; first-start download (models folder) $([math]::Round($dl/1GB,2)) GB"
+          Get-ChildItem "$env:LOCALAPPDATA\HafutzaTyping\models" -ErrorAction SilentlyContinue | ForEach-Object { "  $($_.Name): $([math]::Round(((Get-ChildItem -Recurse -File $_.FullName | Measure-Object Length -Sum).Sum)/1GB,2)) GB" }
           python -c "import json; r=json.load(open(r'C:\st\t14\report.json',encoding='utf-8')); print({k: r.get(k) for k in ('all_missing_before','all_missing_after','ai_model_after','download_seconds','ok')}); exit(0 if r.get('ok') and 'ai' in r['all_missing_before'] and not r['all_missing_after'] and r.get('ai_model_after') else 1)"
       - name: test 13 - AI helper - fix words while typing 13.8 min of Yiddish (and in the English after)
         run: |

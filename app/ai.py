@@ -1,8 +1,9 @@
 """Hafutza Typing (offline): the AI helper that fixes words on request. No window code here.
 
-  The user writes an instruction (English or Yiddish): "change X to Y", "the hall is called ..., fix it".
-  The AI (Qwen3.5-4B, run on this computer by llama.cpp's llama-server, no internet) answers with a list of
-  word changes {find, replace}; the program shows them and the user presses OK. Nothing changes without OK.
+  The user chats with it in the side panel (English or Yiddish): "change X to Y", "shorten the first line",
+  "what is this about?". The AI (Qwen3.5-4B, run on this computer by llama.cpp's llama-server, no internet)
+  answers with a reply and a list of changes {find, replace}; the program makes the changes at once and shows
+  them in the chat, each with an Undo button.
 
   The model (2.7 GB) comes with the program's one-time download of its parts (or later from the AI button);
   the program works fully without it.
@@ -19,22 +20,29 @@ MODEL_SIZE = 2740937888
 MODEL_SHA = "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4"
 CTX = 4096
 
-SYS = ("You are the editor inside a Yiddish typing program. The user gives you a text (Yiddish in Hebrew letters, "
-       "or its English or other translation) and an instruction, in English or Yiddish. Answer with ONLY a JSON list "
-       "of the changes to make, like [{\"find\": \"exact words now in the text\", \"replace\": \"new words\"}]. "
-       "\"find\" must be copied exactly from the text. Make only the changes the instruction asks for. "
-       "The instruction may be in Yiddish even when the text is English: \"טוישט X אויף Y\", \"בייט X צו Y\", "
-       "\"מאך X Y\", \"שרייב Y אנשטאט X\" all mean: change X to Y. Copy X and Y exactly as the user wrote them. "
-       "If the instruction asks for no change you can make, answer [].")
+SYS = ("You are the AI helper inside a Yiddish typing program. The user chats with you, in English or Yiddish, about "
+       "a typed text (Yiddish in Hebrew letters, or its English or other translation). Answer with ONLY a JSON object: "
+       "{\"reply\": \"...\", \"changes\": [{\"find\": \"exact words now in the text\", \"replace\": \"new words\"}]}. "
+       "When the user asks for a change to the text (change, fix, correct, spell, shorten, rewrite, translate a part ...), "
+       "put each change in \"changes\": \"find\" copied exactly from the text (a word, or a whole sentence to rewrite it), "
+       "\"replace\" the new words, and in \"reply\" say in one short sentence what you changed. Make only the changes asked for. "
+       "When the user only asks a question or chats, answer it in \"reply\" (short, in the user's language) and give "
+       "\"changes\": []. "
+       "The message may be in Yiddish even when the text is English: \"טוישט X אויף Y\", \"בייט X צו Y\", "
+       "\"מאך X Y\", \"שרייב Y אנשטאט X\" all mean: change X to Y. Copy X and Y exactly as the user wrote them.")
 
 # Short worked examples shown to the AI before the real question (a small model follows examples best).
 SHOTS = [
-    ("TEXT:\nThe Rebbe tells the story of the old shul.\n\nINSTRUCTION: טוישט \"shul\" אויף \"synagogue\"",
-     '[{"find": "shul", "replace": "synagogue"}]'),
-    ("TEXT:\nדער רבי האט געזאגט א מעשה פון זיין טאטן.\n\nINSTRUCTION: the word for story should be מעשׂה",
-     '[{"find": "מעשה", "replace": "מעשׂה"}]'),
-    ("TEXT:\nWe went to Bnei Brak on Sunday.\n\nINSTRUCTION: בייט \"Sunday\" צו \"Monday\"",
-     '[{"find": "Sunday", "replace": "Monday"}]'),
+    ("TEXT:\nThe Rebbe tells the story of the old shul.\n\nMESSAGE: טוישט \"shul\" אויף \"synagogue\"",
+     '{"reply": "Changed shul to synagogue.", "changes": [{"find": "shul", "replace": "synagogue"}]}'),
+    ("TEXT:\nדער רבי האט געזאגט א מעשה פון זיין טאטן.\n\nMESSAGE: the word for story should be מעשׂה",
+     '{"reply": "Changed מעשה to מעשׂה.", "changes": [{"find": "מעשה", "replace": "מעשׂה"}]}'),
+    ("TEXT:\nWe went to Bnei Brak on Sunday. It was a very very long and tiring trip for all of us.\n\n"
+     "MESSAGE: make the second sentence shorter",
+     '{"reply": "Shortened the second sentence.", "changes": [{"find": "It was a very very long and tiring trip '
+     'for all of us.", "replace": "It was a long trip."}]}'),
+    ("TEXT:\nWe went to Bnei Brak on Sunday.\n\nMESSAGE: where did they go?",
+     '{"reply": "They went to Bnei Brak, on Sunday.", "changes": []}'),
 ]
 
 _Q = r'["\u201c\u201d\u201e\u05f4]([^"\u201c\u201d\u201e\u05f4]+)["\u201c\u201d\u201e\u05f4]'
@@ -216,12 +224,17 @@ class Server:
         except Exception as e:
             engine.log("ai prime failed %r" % e)
 
-    def _messages(self, text, instruction):
+    def _messages(self, text, message, history=()):
+        """history: earlier (message, answer) pairs of this chat, newest last (only the last few are sent)."""
         shots = []
         for q, a in SHOTS:
             shots += [{"role": "user", "content": q}, {"role": "assistant", "content": a}]
-        return [{"role": "system", "content": SYS}] + shots + [
-            {"role": "user", "content": "TEXT:\n" + text + "\n\nINSTRUCTION: " + instruction}]
+        past = []
+        for q, a in list(history)[-2:]:
+            past += [{"role": "user", "content": "MESSAGE: " + q},
+                     {"role": "assistant", "content": json.dumps({"reply": a, "changes": []}, ensure_ascii=False)}]
+        return [{"role": "system", "content": SYS}] + shots + past + [
+            {"role": "user", "content": "TEXT:\n" + text + "\n\nMESSAGE: " + message}]
 
     def _post(self, messages, max_tokens):
         body = {"messages": messages, "temperature": 0, "max_tokens": max_tokens, "cache_prompt": True,
@@ -234,9 +247,15 @@ class Server:
 
     def ask(self, text, instruction, stop=lambda: False):
         """-> (list of (find, replace), raw answer)."""
+        reply, ch, out = self.chat(text, instruction, (), stop)
+        return ch, out
+
+    def chat(self, text, message, history=(), stop=lambda: False):
+        """One chat message about the text. -> (reply words, list of (find, replace), raw answer)."""
         self.start(stop)
-        out = self._post(self._messages(text, instruction), 300)
-        return parse(out), out
+        out = self._post(self._messages(text, message, history), 600)
+        reply, ch = parse_chat(out)
+        return reply, ch, out
 
     def close(self):
         if self.proc is not None:
@@ -264,6 +283,26 @@ def parse(out):
             if f and f != r and (f, r) not in res:
                 res.append((f, r))
     return res
+
+
+def parse_chat(out):
+    """-> (reply, [(find, replace)]). Takes the JSON object the AI is asked for; a bare list of changes or plain
+    words (a small model sometimes slips) work too."""
+    out = re.sub(r"<think>.*?</think>", "", out or "", flags=re.S).strip()
+    m = re.search(r"\{.*\}", out, re.S)
+    if m and not out.lstrip().startswith("["):
+        try:
+            obj = json.loads(m.group(0))
+        except Exception:
+            obj = None
+        if isinstance(obj, dict) and ("reply" in obj or "changes" in obj):
+            reply = obj.get("reply") if isinstance(obj.get("reply"), str) else ""
+            ch = parse(json.dumps(obj.get("changes") or [], ensure_ascii=False))
+            return reply.strip(), ch
+    ch = parse(out)
+    if ch or out.lstrip().startswith("["):
+        return "", ch
+    return re.sub(r"^```\w*|```$", "", out).strip(), []
 
 
 def count(text, find):

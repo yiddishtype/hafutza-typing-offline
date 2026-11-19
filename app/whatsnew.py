@@ -3,7 +3,10 @@
 NOTES = {
     "1.5": [
         "Faster: the AI now answers much quicker, also while a video is being typed (the typing waits a moment for it).",
-        "TYPING_LINE",
+        "New: the AI ball on the side of the window. Click it and the AI opens as a chat on the side; click again to close it.",
+        "Chat with the AI like texting: ask for a change (fix a word, shorten, translate, rewrite a part, in Yiddish or English) "
+        "and it makes it in the text right away and says what it changed. Every change has an Undo button. "
+        "You can also just ask it a question.",
         "One download: after installing, the program downloads everything it needs once, the AI included, "
         "with one progress bar. Then it all works with no internet.",
     ],

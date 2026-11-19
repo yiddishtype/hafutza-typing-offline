@@ -1,6 +1,12 @@
 **Hafutza Typing for Windows** - types up Yiddish (and Hebrew, English, Spanish, French) videos and recordings on your own computer, with no internet, and translates them to Yiddish, English, Hebrew, Spanish and French.
 
-Download **HafutzaTyping-Setup.exe** below and open it. (Have version 1.1, 1.2, 1.3 or 1.3.1? Just press the program's **Update** button. Have version 1.0? Install this one over it. Your typed texts and the downloaded parts are kept.)
+Download **HafutzaTyping-Setup.exe** below and open it. (Have version 1.1, 1.2, 1.3, 1.3.1 or 1.4? Just press the program's **Update** button. Have version 1.0? Install this one over it. Your typed texts and the downloaded parts are kept.)
+
+New in 1.5:
+- **The AI ball**: a round **AI** ball on the side of the window. Click it and the AI opens as a **chat on the side** (about 4 inches wide); click it again to close it.
+- **Chat with the AI like texting**: write in the box at the bottom and press Enter. Ask for a change (fix a word, shorten a line, translate, rewrite a part, in Yiddish or English) and it **makes the change in the text right away** and says what it changed. Every change has an **Undo** button. You can also just ask it a question, and it answers in the chat.
+- **Faster AI**: it answers much quicker, also while a video is being typed (the typing waits a moment for it).
+- **One download**: after installing, the program downloads everything once, **the AI included**, with one progress bar (SIZE_TOTAL). Then it all works with no internet.
 
 New in 1.4:
 - **AI: fix words** (new button at the top): write what to fix, in Yiddish or English, for example *change X to Y* or *write Reb, not Rabbi*. The AI shows the word changes it suggests; untick any you don't want and press **OK**. Nothing changes without OK.
@@ -31,7 +37,7 @@ New in 1.1:
 - Right-click a video or sound file in Windows: **Open with > Hafutza Typing**.
 
 - If Windows says "Windows protected your PC": click **More info**, then **Run anyway**. (The program is new and not signed by a paid certificate, so Windows does not know it yet.)
-- The first time it opens it downloads the translation and Hebrew / English / Spanish / French parts once (about 3 GB). After that it works with no internet.
+- The first time it opens it downloads the translation, the Hebrew / English / Spanish / French parts and the AI once (SIZE_TOTAL). After that it works with no internet.
 
 Needs: Windows 10 or 11 (64-bit), about 5 GB of free disk space, 8 GB of memory (4 GB works but slowly).
 

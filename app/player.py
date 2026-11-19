@@ -116,16 +116,23 @@ class Keyboard(QFrame):
     typed = Signal(str)         # a letter
     back = Signal()
 
-    def __init__(self):
+    def __init__(self, compact=False):
+        """compact: small keys and no row over 10 keys, to fit the AI side panel (about 4 inches)."""
         super().__init__()
         self.setObjectName("kbd")
         self.setStyleSheet("QFrame#kbd { background: #eef1f5; border: 1px solid #c8ccd2; border-radius: 8px; }"
-                           "QPushButton { font-size: 17pt; padding: 4px; min-width: 44px; min-height: 40px; }")
+                           + ("QPushButton { font-size: 13pt; padding: 2px; min-width: 26px; min-height: 34px; }" if compact else
+                              "QPushButton { font-size: 17pt; padding: 4px; min-width: 44px; min-height: 40px; }"))
         lay = QVBoxLayout(self)
-        lay.setSpacing(4)
+        lay.setSpacing(3 if compact else 4)
         self.keys = {}
-        for row in ROWS:
-            r = QHBoxLayout(); r.setSpacing(4)
+        rows = ROWS
+        if compact:
+            rows = []
+            for row in ROWS:
+                rows += [row] if len(row) <= 10 else [row[:len(row) // 2], row[len(row) // 2:]]
+        for row in rows:
+            r = QHBoxLayout(); r.setSpacing(3 if compact else 4)
             r.addStretch(1)
             for ch in row:
                 b = QPushButton(ch)
@@ -138,9 +145,9 @@ class Keyboard(QFrame):
         r = QHBoxLayout()
         r.addStretch(1)
         sp = QPushButton("space  -  רווח")
-        sp.setMinimumWidth(320); sp.setFocusPolicy(Qt.NoFocus)
+        sp.setMinimumWidth(150 if compact else 320); sp.setFocusPolicy(Qt.NoFocus)
         sp.clicked.connect(lambda: self.typed.emit(" "))
-        bk = QPushButton("⌫  erase one letter")
+        bk = QPushButton("⌫" if compact else "⌫  erase one letter")
         bk.setFocusPolicy(Qt.NoFocus)
         bk.clicked.connect(self.back.emit)
         self.keys[" "], self.keys["back"] = sp, bk
