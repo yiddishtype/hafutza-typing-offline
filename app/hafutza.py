@@ -257,6 +257,18 @@ class Job(QThread):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+def part_size(k):
+    return ai.MODEL_SIZE if k == "ai" else engine.manifest()[k]["size"]
+
+
+def all_missing():
+    """Every part not here yet: the typing/translation models and the AI, so one download brings everything."""
+    miss = engine.missing()
+    if ai.server_exe() and not ai.model_file():
+        miss.append("ai")
+    return miss
+
+
 class Fetch(QThread):
     progress = Signal(str, float)
     done = Signal(bool, str)
@@ -272,7 +284,7 @@ class Fetch(QThread):
     def run(self):
         try:
             for n, k in enumerate(self.keys, 1):
-                what = "%s (%d of %d, %.1f GB)" % (engine.MODEL_WHAT[k], n, len(self.keys), engine.manifest()[k]["size"] / 1e9)
+                what = "%s (%d of %d, %.1f GB)" % (engine.MODEL_WHAT[k], n, len(self.keys), part_size(k) / 1e9)
                 self.progress.emit(what, 0.0)
                 mark = [0]
 
@@ -281,7 +293,10 @@ class Fetch(QThread):
                     if d / t >= mark[0] + 0.1:
                         mark[0] += 0.1
                         log("download %s %.0f%%" % (k, 100 * d / t))
-                engine.download(k, prog, lambda: self._stop)
+                if k == "ai":
+                    ai.download(prog, lambda: self._stop)
+                else:
+                    engine.download(k, prog, lambda: self._stop)
                 log("downloaded %s" % k)
             self.done.emit(True, "")
         except engine.Stopped:
@@ -299,7 +314,7 @@ class FetchDialog(QDialog):
         self.keys, self.ok = keys, False
         self.setWindowTitle(TITLE + " - one-time download")
         self.setMinimumWidth(620)
-        gb = sum(engine.manifest()[k]["size"] for k in keys) / 1e9
+        gb = sum(part_size(k) for k in keys) / 1e9
         lay = QVBoxLayout(self)
         what = ", ".join(engine.MODEL_WHAT[k] for k in keys)
         t = QLabel("One time only: Hafutza Typing needs to download the parts for %s (%.1f GB).\n"
@@ -856,7 +871,12 @@ class AIAsk(QThread):
                 self.server.start()
                 self.done.emit([], "", "", time.time() - t)
                 return
-            ch, raw = self.server.ask(ai.context(self.text, self.instruction), self.instruction)
+            self.server.start()                # starting is mostly reading the file: the typing need not wait for it
+            engine.HOLD.set()
+            try:
+                ch, raw = self.server.ask(ai.context(self.text, self.instruction), self.instruction)
+            finally:
+                engine.HOLD.clear()
             log("ai answer %.1f s: %s" % (time.time() - t, raw[:500].replace("\n", " ")))
             self.by = "ai"
             q = ai.quoted(self.instruction)
@@ -1831,12 +1851,12 @@ class Window(QMainWindow):
 def first_start_offer(win):
     """On the first start (or any start while parts are missing), offer the one-time download."""
     try:
-        miss = engine.missing()
+        miss = all_missing()
     except Exception as e:
         QMessageBox.warning(win, TITLE, str(e))
         return
     if miss:
-        FetchDialog(win, miss).exec()
+        FetchDialog(win, miss, auto=True).exec()     # starts by itself: one download brings every part
 
 
 # ------------------------------------------------------------------ self-test for the build machine
@@ -1869,13 +1889,16 @@ def selftest(app, win, a):
             rep["missing_before"] = engine.missing()
             log("selftest: ready, missing %s" % rep["missing_before"])
             shot("1-ready")
-            if a.download and engine.missing():
-                d = FetchDialog(win, engine.missing(), auto=True)
+            rep["all_missing_before"] = all_missing()
+            if a.download and all_missing():
+                d = FetchDialog(win, all_missing(), auto=True)
                 QTimer.singleShot(4000, lambda: d.grab().save(os.path.join(out, "0-download.png")))
                 t = time.time()
                 d.exec()
                 rep["download_seconds"] = time.time() - t
             rep["missing_after"] = engine.missing()
+            rep["all_missing_after"] = all_missing()
+            rep["ai_model_after"] = ai.model_file()
             log("selftest: missing after download %s; starting" % rep["missing_after"])
             if not win.start(auto=True):
                 rep["error"] = "did not start"

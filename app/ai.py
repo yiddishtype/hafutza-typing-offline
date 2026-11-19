@@ -4,7 +4,8 @@
   The AI (Qwen3.5-4B, run on this computer by llama.cpp's llama-server, no internet) answers with a list of
   word changes {find, replace}; the program shows them and the user presses OK. Nothing changes without OK.
 
-  The model (2.7 GB) is an optional, separate download: the program works fully without it.
+  The model (2.7 GB) comes with the program's one-time download of its parts (or later from the AI button);
+  the program works fully without it.
   llama-server.exe comes with the program, in the folder "llama".
 """
 import hashlib, json, os, re, socket, subprocess, sys, threading, time, urllib.request
@@ -16,7 +17,7 @@ MODEL_URL = ("https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/"
 MODEL_FILE = "Qwen3.5-4B-Q4_K_M.gguf"
 MODEL_SIZE = 2740937888
 MODEL_SHA = "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4"
-CTX = 8192
+CTX = 4096
 
 SYS = ("You are the editor inside a Yiddish typing program. The user gives you a text (Yiddish in Hebrew letters, "
        "or its English or other translation) and an instruction, in English or Yiddish. Answer with ONLY a JSON list "
@@ -178,14 +179,17 @@ class Server:
         if not model:
             raise RuntimeError("The AI model is not downloaded yet.")
         s = socket.socket(); s.bind(("127.0.0.1", 0)); self.port = s.getsockname()[1]; s.close()
-        n = max(1, (os.cpu_count() or 2) // 2)   # leave half the computer to the typing
+        # The typing waits while the AI answers (engine.HOLD), so the AI may use the whole computer:
+        # reading the question on every core, writing the answer on one thread per real core.
+        nb = max(1, os.cpu_count() or 2)
+        n = max(1, nb // 2)
         logf = open(os.path.join(engine.user_dir(), "ai-log.txt"), "w", encoding="utf-8", errors="replace")
         flags = 0x08000000 if sys.platform == "win32" else 0     # CREATE_NO_WINDOW
-        self.proc = subprocess.Popen([exe, "-m", model, "-c", str(CTX), "-t", str(n), "--jinja",
+        self.proc = subprocess.Popen([exe, "-m", model, "-c", str(CTX), "-t", str(n), "-tb", str(nb), "--jinja",
                                       "--host", "127.0.0.1", "--port", str(self.port)],
                                      stdout=logf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                      creationflags=flags, cwd=os.path.dirname(exe))
-        engine.log("ai server started, port %d, %d threads" % (self.port, n))
+        engine.log("ai server started, port %d, %d/%d threads" % (self.port, n, nb))
         t0 = time.time()
         while time.time() - t0 < 300:
             if stop():
@@ -196,6 +200,7 @@ class Server:
             try:
                 with _LOCAL.open("http://127.0.0.1:%d/health" % self.port, timeout=5) as r:
                     if r.status == 200:
+                        self._prime()
                         return
             except Exception:
                 pass
@@ -203,20 +208,34 @@ class Server:
         self.close()
         raise RuntimeError("The AI took too long to start.")
 
-    def ask(self, text, instruction, stop=lambda: False):
-        """-> (list of (find, replace), raw answer)."""
-        self.start(stop)
+    def _prime(self):
+        """Read the fixed start of every question (rules + examples) once now; llama-server keeps it, so each real
+        question only has to read the text and the instruction."""
+        try:
+            self._post(self._messages("x", "x"), 1)
+        except Exception as e:
+            engine.log("ai prime failed %r" % e)
+
+    def _messages(self, text, instruction):
         shots = []
         for q, a in SHOTS:
             shots += [{"role": "user", "content": q}, {"role": "assistant", "content": a}]
-        body = {"messages": [{"role": "system", "content": SYS}] + shots + [
-                             {"role": "user", "content": "TEXT:\n" + text + "\n\nINSTRUCTION: " + instruction}],
-                "temperature": 0, "max_tokens": 800, "chat_template_kwargs": {"enable_thinking": False}}
+        return [{"role": "system", "content": SYS}] + shots + [
+            {"role": "user", "content": "TEXT:\n" + text + "\n\nINSTRUCTION: " + instruction}]
+
+    def _post(self, messages, max_tokens):
+        body = {"messages": messages, "temperature": 0, "max_tokens": max_tokens, "cache_prompt": True,
+                "chat_template_kwargs": {"enable_thinking": False}}
         req = urllib.request.Request("http://127.0.0.1:%d/v1/chat/completions" % self.port,
                                      data=json.dumps(body).encode("utf-8"),
                                      headers={"Content-Type": "application/json"})
         with _LOCAL.open(req, timeout=600) as r:
-            out = json.loads(r.read().decode("utf-8"))["choices"][0]["message"]["content"] or ""
+            return json.loads(r.read().decode("utf-8"))["choices"][0]["message"]["content"] or ""
+
+    def ask(self, text, instruction, stop=lambda: False):
+        """-> (list of (find, replace), raw answer)."""
+        self.start(stop)
+        out = self._post(self._messages(text, instruction), 300)
         return parse(out), out
 
     def close(self):
@@ -262,7 +281,7 @@ def apply(text, changes):
     return text, n
 
 
-def context(text, instruction, limit=6000):
+def context(text, instruction, limit=2500):
     """The part of the text to show the AI: lines with words from the instruction first, then the start, up to
     about `limit` characters (the AI reads at most a few thousand words at a time)."""
     if len(text) <= limit:

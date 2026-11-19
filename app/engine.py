@@ -6,7 +6,7 @@
   translate    NLLB-200 distilled 1.3B (int8, CTranslate2), line by line
   models       which model files are here, and the one-time download of the missing ones (resumable, checked by sha256)
 """
-import gc, hashlib, json, os, sys, time, urllib.request
+import gc, hashlib, json, os, sys, threading, time, urllib.request
 
 LANGS = ["yi", "en", "he", "es", "fr"]
 NAME_YI = {"yi": "אידיש", "en": "ענגליש", "he": "עברית", "es": "שפאניש", "fr": "פראנצויזיש"}
@@ -14,13 +14,24 @@ NAME_EN = {"yi": "Yiddish", "en": "English", "he": "Hebrew", "es": "Spanish", "f
 NLLB_CODE = {"yi": "ydd_Hebr", "he": "heb_Hebr", "en": "eng_Latn", "es": "spa_Latn", "fr": "fra_Latn"}
 SPEECH_MODEL = {"yi": "yi", "he": "he", "en": "multi", "es": "multi", "fr": "multi"}
 MODEL_WHAT = {"yi": "Yiddish speech", "he": "Hebrew speech", "multi": "English / Spanish / French speech",
-              "nllb": "translation"}
+              "nllb": "translation", "ai": "the AI helper (fix words)"}
 RELEASE = "https://github.com/yiddishtype/hafutza-typing-offline/releases/download/models-v1/"
 RATE = 16000
 
 
 class Stopped(Exception):
     pass
+
+
+# Set while the AI helper is answering: typing and translating wait between lines, so the AI gets the whole
+# computer and answers several times quicker; the typing goes on right after (at most 3 minutes' wait).
+HOLD = threading.Event()
+
+
+def wait_hold(stop):
+    t = time.time()
+    while HOLD.is_set() and not stop() and time.time() - t < 180:
+        time.sleep(0.1)
 
 
 class NoSound(Exception):
@@ -279,6 +290,7 @@ def transcribe(x, spoken, progress, stop, hotwords=None, segments=None):
                     lines.append(t)
                     segs.append((round(s0 / RATE + s.start, 2), round(s0 / RATE + s.end, 2), t))
                 progress(min(0.999, (s0 / RATE + s.end) / max(dur, 1)), lines[-6:])
+                wait_hold(stop)
                 if time.time() - said > 60:
                     said = time.time()
                     log("typed up to %.0f s of %.0f" % (s0 / RATE + s.end, dur))
@@ -303,6 +315,7 @@ class Translator:
         idx = [i for i, l in enumerate(lines) if l.strip()]
         out = list(lines)
         for k in range(0, len(idx), 8):
+            wait_hold(stop)
             if stop():
                 raise Stopped()
             part = idx[k:k + 8]

@@ -7,7 +7,7 @@ on:
         default: ""
       version:
         description: "Program version"
-        default: "1.4"
+        default: "1.5"
       replace_v10:
         description: "Also put the new full installer at the v1.0 link the owner has (yes/no)"
         default: "yes"
@@ -184,16 +184,21 @@ jobs:
           if (-not $p.WaitForExit(1500000)) { taskkill /PID $p.Id /T /F; "AI TEST (missing) HUNG"; exit 1 }
           Get-Content C:\st\t13a\report.json
           if ($p.ExitCode -ne 0) { "AI TEST (missing model) FAILED"; exit 1 }
-      - name: test 13 - AI helper - download the AI (2.7 GB), then fix words while typing 13.8 min of Yiddish (and in the English after)
+      - name: test 14 - one download - the program's own one-time download brings the AI too (2.7 GB), then types a clip
+        run: |
+          python tools/run_selftest.py "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" tests\clip30.mp3 yi yi C:\st\t14 --download --timeout 40
+          python -c "import json; r=json.load(open(r'C:\st\t14\report.json',encoding='utf-8')); print({k: r.get(k) for k in ('all_missing_before','all_missing_after','ai_model_after','download_seconds','ok')}); exit(0 if r.get('ok') and 'ai' in r['all_missing_before'] and not r['all_missing_after'] and r.get('ai_model_after') else 1)"
+      - name: test 13 - AI helper - fix words while typing 13.8 min of Yiddish (and in the English after)
         run: |
           $d = "$env:LOCALAPPDATA\HafutzaTyping\models\ai"
           New-Item -ItemType Directory -Force $d | Out-Null
           $t = Get-Date
+          if ((Test-Path "$d\Qwen3.5-4B-Q4_K_M.gguf") -or (Test-Path "$env:LOCALAPPDATA\Programs\Hafutza Typing\models\ai\Qwen3.5-4B-Q4_K_M.gguf")) { "AI model already here (test 14)" } else {
           curl.exe -sSL --retry 5 -o "$d\Qwen3.5-4B-Q4_K_M.gguf.part" "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-Q4_K_M.gguf"
           $h = (Get-FileHash "$d\Qwen3.5-4B-Q4_K_M.gguf.part" -Algorithm SHA256).Hash.ToLower()
           "model download $([int]((Get-Date) - $t).TotalSeconds) s, sha256 $h"
           if ($h -ne "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4") { "MODEL DOWNLOAD BAD"; exit 1 }
-          Move-Item "$d\Qwen3.5-4B-Q4_K_M.gguf.part" "$d\Qwen3.5-4B-Q4_K_M.gguf"
+          Move-Item "$d\Qwen3.5-4B-Q4_K_M.gguf.part" "$d\Qwen3.5-4B-Q4_K_M.gguf" }
           $p = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" -ArgumentList '--ai-test', "$pwd\tests\long.mp3", '--spoken', 'yi', '--targets', 'yi,en', '--out', 'C:\st\t13', '--ai-timeout', '4200' -PassThru
           if (-not $p.WaitForExit(4500000)) { taskkill /PID $p.Id /T /F; "AI TEST HUNG"; exit 1 }
           Get-Content C:\st\t13\report.json
