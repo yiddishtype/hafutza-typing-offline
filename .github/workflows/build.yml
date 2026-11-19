@@ -160,6 +160,8 @@ jobs:
             Get-ChildItem C:\st\t15 -ErrorAction SilentlyContinue | Select-Object Name, Length
             taskkill /PID $p.Id /T /F; exit 1 }
           Get-Content C:\st\t15\result.txt
+          "log lines of the run:"; Get-Content "$env:LOCALAPPDATA\HafutzaTyping\log.txt" | Select-String 'ui test|exit' | Select-Object -Last 20
+          "processes still running after it:"; Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq $p.Id -or $_.Name -match 'Hafutza|llama|notepad|explorer' } | Select-Object ProcessId, ParentProcessId, Name, CommandLine | Format-Table -AutoSize | Out-String -Width 300
           if ($p.ExitCode -ne 0) { Get-Content C:\st\t15\report.json; Get-Content "$env:LOCALAPPDATA\HafutzaTyping\log.txt" | Select-Object -Last 40; "UI TEST FAILED"; exit 1 }
       - name: test 6 - a double click on the drop box opens the file browser once
         run: |
