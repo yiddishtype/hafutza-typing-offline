@@ -2850,6 +2850,23 @@ def ai_test(app, win, a):
     QTimer.singleShot(int(a.ai_timeout * 1000), lambda: (rep.__setitem__("error", "timed out"), finish(11)))
 
 
+def hard_exit(rc):
+    """Be really gone, now. On Windows TerminateProcess skips the DLL clean-up that os._exit still runs
+    (a library's clean-up crashed the program with 0xC0000005 after a good run)."""
+    try:
+        sys.stdout.flush(); sys.stderr.flush()
+    except Exception:
+        pass
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            k = ctypes.windll.kernel32
+            k.TerminateProcess(k.GetCurrentProcess(), int(rc) & 0xFFFFFFFF)
+        except Exception:
+            pass
+    os._exit(rc)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("files", nargs="*")
@@ -2868,7 +2885,7 @@ def main():
     if other and files and not test and sys.platform == "win32":
         if send_to_running(files):
             log("files handed to the open window: %s" % files)
-            os._exit(0)          # end at once (a normal Python/Qt shutdown here could hang on Windows)
+            hard_exit(0)         # end at once (a normal Python/Qt shutdown here could hang on Windows)
     f = QFont("Segoe UI", 12)
     app.setFont(f)
     app.setStyleSheet(STYLE)
@@ -2917,7 +2934,7 @@ def main():
     rc = app.exec()
     log("exit %s" % rc)
     if sys.platform == "win32":
-        os._exit(rc)             # be really gone: the update installer waits for this program to close
+        hard_exit(rc)            # be really gone: the update installer waits for this program to close
     return rc
 
 
