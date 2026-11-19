@@ -45,6 +45,14 @@ if os.path.exists(log) and os.path.getsize(log) > seen:
     with open(log, "rb") as fh:
         fh.seek(seen); print(fh.read().decode("utf-8", "replace"), end="")
 print("exit code", code, "after %.0f s" % took)
+if code == 3221225477 and sys.platform == "win32":   # a crash: ask Windows which module faulted
+    try:
+        import subprocess
+        print(subprocess.run(["powershell", "-NoProfile", "-Command",
+                              "Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000} -MaxEvents 2 | "
+                              "Format-List TimeCreated,Message"], capture_output=True, text=True, timeout=60).stdout[:3000])
+    except Exception as e:
+        print("event log read failed", e)
 rp = os.path.join(out, "report.json")
 if os.path.exists(rp):
     r = json.load(open(rp, encoding="utf-8"))

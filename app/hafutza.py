@@ -2860,7 +2860,11 @@ def hard_exit(rc):
     if sys.platform == "win32":
         try:
             import ctypes
+            from ctypes import wintypes
             k = ctypes.windll.kernel32
+            k.GetCurrentProcess.restype = wintypes.HANDLE      # a 64-bit handle: as a plain int the call fails silently
+            k.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+            k.TerminateProcess.restype = wintypes.BOOL
             k.TerminateProcess(k.GetCurrentProcess(), int(rc) & 0xFFFFFFFF)
         except Exception:
             pass
