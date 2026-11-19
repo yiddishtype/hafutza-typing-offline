@@ -1083,6 +1083,7 @@ def ui_test(app, win, a):
         ok["fonts_bundled_20_plus"] = rep["notes"]["fonts"] >= 20
 
         # 1. Settings window: brightness, volume, font, remembered on disk
+        log("ui test: section 1")
         d = open_settings(win)
         d.ctl["brightness"].setValue(70)
         d.ctl["volume"].setValue(55)
@@ -1103,6 +1104,7 @@ def ui_test(app, win, a):
         ok["settings_undo_back"] = prefs.get("brightness") == 100 and not win.dim.isVisible()
 
         # 2. The AI chat: "make the buttons blue and bigger and move the AI button to the left"
+        log("ui test: section 2")
         chat = win.show_ai(True)
         instr = "make the buttons blue and bigger and move the AI button to the left"
         chat.bubble("me", instr)
@@ -1119,6 +1121,7 @@ def ui_test(app, win, a):
         ok["words_alone_work_too"] = prefs.get("button_color") in ("blue", "#0000ff") and prefs.get("ai_button_pos") == "left"
 
         # 3. Reset to normal (and its Undo)
+        log("ui test: section 3")
         prefs.set_many({"theme": "dark", "hide": ["footer"]}); apply_prefs(win)
         rec = reset_normal(win)
         ok["reset_normal"] = prefs.load() == prefs.DEFAULTS or all(prefs.get(k) == v for k, v in prefs.DEFAULTS.items())
@@ -1131,6 +1134,7 @@ def ui_test(app, win, a):
         rep["notes"]["menu"] = [t[0] for t in menu_items(win) if t]
 
         # 4. AI panel: side (about 400 px) and full window; the ball stays
+        log("ui test: section 4")
         win.resize(1300, 900); wait(lambda: False, 0.3)
         set_full(win, False); wait(lambda: False, 0.3)
         rep["notes"]["side_width"] = win.ai_panel.width()
@@ -1145,6 +1149,7 @@ def ui_test(app, win, a):
         ok["back_to_side"] = win.scroll.isVisible() and win.ai_panel.width() < 600
 
         # 5. Add-on: a chat request makes a working "Copy all" button
+        log("ui test: section 5")
         chat.bubble("me", "add a button that copies all the text")
         handle(chat, ai.parse_answer(CANNED_COPY), "add a button that copies all the text", [])
         btns = [w for w in win.addon_widgets if isinstance(w, QPushButton)]
@@ -1175,6 +1180,7 @@ def ui_test(app, win, a):
         ok["reset_undo_addons_on"] = len(win.addon_widgets) == 1
 
         # 6. Something it can't build: plain reason, "Send to Avi" and "Ask a different AI"
+        log("ui test: section 6")
         win.last_help = None
         handle(chat, ai.parse_answer(CANNED_BAD), "email me the text every morning", [])
         names = {b.objectName() for b in win.last_help.findChildren(QPushButton)} if win.last_help is not None else set()
@@ -1210,6 +1216,7 @@ def ui_test(app, win, a):
         ok["partial_undo"] = prefs.load().get("font_size") == before
 
         # 6b. Hebrew answers show right-to-left; the Update window takes a link from another AI (checked first)
+        log("ui test: section 6b")
         chat.bubble("bot", "שיניתי את הצבע של הכפתורים לכחול.\n2 שינויים נעשו.")
         lbs = [l for l in chat.findChildren(QLabel) if hasattr(l, "rtl")]
         ok["hebrew_bubble_rtl"] = bool(lbs) and lbs[-1].rtl and lbs[-1].text().startswith("\u200f") and \
@@ -1241,18 +1248,26 @@ def ui_test(app, win, a):
         ud = H.UpdateDialog(win, known={"version": H.VERSION, "url": "", "sha256": "", "size": 1, "newer": False})
         QApplication.processEvents()
         ud.link_in.setText("https://example.com/not-github")
-        ud.from_link(ask=False); ud.lchk.wait(); QApplication.processEvents()
+        ud.result_text = ""
+        log("ui test: 6b link 1")
+        ud.from_link(ask=False)
+        wait(lambda: ud.result_text.startswith("link"), 30)
         bad_msg = "not a GitHub link" in ud.msg.text()
         real_from, fetched = updater.from_link, []
         updater.from_link = lambda link: dict(good)
         ud.fetch = lambda: fetched.append(ud.m["version"])
         ud.link_in.setText("https://github.com/someone/hafutza-typing-offline")
-        ud.from_link(ask=False); ud.lchk.wait(); QApplication.processEvents()
+        ud.result_text = ""
+        log("ui test: 6b link 2")
+        ud.from_link(ask=False)
+        wait(lambda: ud.result_text.startswith("link"), 30)
         updater.from_link = real_from
+        log("ui test: 6b link done")
         ok["update_from_link"] = bad_msg and fetched == ["1.6.1"]
         ud.close()
 
         # 7. Send to Avi: no internet -> kept; internet back -> sent by itself
+        log("ui test: section 7")
         for f in (requests_out._file(),):
             if os.path.exists(f):
                 os.remove(f)
@@ -1274,6 +1289,7 @@ def ui_test(app, win, a):
         shot("10-sent-to-avi")
 
         # 8. Ask a different AI, with a (mocked) online AI: it answers an add-on, checked and applied with Undo
+        log("ui test: section 8")
         os.environ["HAFUTZA_ONLINE_URL"] = mock.url + "/online"
         od = open_online(win, "add a button that saves the text as a Word file")
         od.ask()
@@ -1293,6 +1309,7 @@ def ui_test(app, win, a):
         od.accept()
 
         # 9. No key: copy a ready request for a free AI website, paste the answer back
+        log("ui test: section 9")
         del os.environ["HAFUTZA_ONLINE_URL"]
         online.save("gemini", "", "")
         od = open_online(win, "make it dark")
@@ -1309,6 +1326,7 @@ def ui_test(app, win, a):
         od.accept()
 
         # 10. Saved between runs: what is on disk loads again
+        log("ui test: section 10")
         prefs.set_many({"button_color": "green"})
         prefs._cur = None
         ok["remembered_between_runs"] = prefs.load()["button_color"] in ("green", prefs.color("green"))
@@ -1328,5 +1346,6 @@ def ui_test(app, win, a):
     with open(os.path.join(out, "result.txt"), "w", encoding="utf-8") as f:
         f.write(("PASS" if rep["pass"] else "FAIL") + "\n" + "\n".join("%s %s" % ("ok  " if v else "FAIL", k) for k, v in ok.items())
                 + ("\n" + rep.get("error", "")))
+    log("ui test: report written, closing")
     mock.srv.shutdown()
     QTimer.singleShot(100, lambda: app.exit(0 if rep["pass"] else 1))

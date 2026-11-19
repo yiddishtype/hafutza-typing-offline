@@ -668,7 +668,7 @@ class UpdateDialog(QDialog):
         self.lchk.start()
 
     def link_checked(self, m, err):
-        self.lchk.wait()
+        self.lchk.wait(3000)
         self.bar.setRange(0, 1000); self.bar.hide()
         self.link_go.setEnabled(True)
         if m is None:

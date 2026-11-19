@@ -153,9 +153,14 @@ jobs:
           if ($a.ExitCode -ne 0 -or $b.ExitCode -ne 0) { "BLUE BUTTON TEST FAILED"; exit 1 }
       - name: test 15 - three-dots menu, Settings (brightness, volume, font) remembered, AI makes buttons blue and bigger and moves the AI button left, Undo, Reset to normal, AI side 400 px and full window, add-on button from chat, Send to Avi (kept, then sent), Ask a different AI (mocked online AI) and paste-back
         run: |
-          $p = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" -ArgumentList '--ui-test', '--out', 'C:\st\t15' -PassThru -Wait
+          $p = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" -ArgumentList '--ui-test', '--out', 'C:\st\t15' -PassThru
+          if (-not $p.WaitForExit(600000)) {
+            "UI TEST DID NOT END IN 10 MINUTES - last log lines:"
+            Get-Content "$env:LOCALAPPDATA\HafutzaTyping\log.txt" | Select-Object -Last 40
+            Get-ChildItem C:\st\t15 -ErrorAction SilentlyContinue | Select-Object Name, Length
+            taskkill /PID $p.Id /T /F; exit 1 }
           Get-Content C:\st\t15\result.txt
-          if ($p.ExitCode -ne 0) { Get-Content C:\st\t15\report.json; "UI TEST FAILED"; exit 1 }
+          if ($p.ExitCode -ne 0) { Get-Content C:\st\t15\report.json; Get-Content "$env:LOCALAPPDATA\HafutzaTyping\log.txt" | Select-Object -Last 40; "UI TEST FAILED"; exit 1 }
       - name: test 6 - a double click on the drop box opens the file browser once
         run: |
           $p = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" -ArgumentList '--click-test', "$pwd\tests\clip30.mp4", '--out', 'C:\st\t6' -PassThru -Wait
