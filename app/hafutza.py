@@ -3129,6 +3129,10 @@ def main():
         QTimer.singleShot(3000, win.quiet_check)
     rc = app.exec()
     log("exit %s" % rc)
+    try:
+        win.ai_server.close()    # the tests end with app.exit, not a window close: never leave the AI running
+    except Exception:
+        pass
     if sys.platform == "win32":
         hard_exit(rc)            # be really gone: the update installer waits for this program to close
     return rc

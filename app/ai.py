@@ -259,6 +259,49 @@ def download(progress, stop):
 # ------------------------------------------------------------------ the server
 _LOCAL = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # never send 127.0.0.1 through a proxy
 
+_JOB = None
+
+
+def _tie_to_us(proc):
+    """Windows: put the child in a job that is closed when this program ends, however it ends (closed, crashed,
+    TerminateProcess), so llama-server never stays running in the background holding memory."""
+    global _JOB
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k = ctypes.windll.kernel32
+        k.CreateJobObjectW.restype = wintypes.HANDLE
+        k.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        k.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        k.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        if _JOB is None:
+            class BASIC(ctypes.Structure):
+                _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                            ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                            ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                            ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                            ("SchedulingClass", wintypes.DWORD)]
+
+            class IO(ctypes.Structure):
+                _fields_ = [(n, ctypes.c_uint64) for n in ("r", "w", "o", "rb", "wb", "ob")]
+
+            class EXT(ctypes.Structure):
+                _fields_ = [("Basic", BASIC), ("Io", IO), ("ProcessMemoryLimit", ctypes.c_size_t),
+                            ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                            ("PeakJobMemoryUsed", ctypes.c_size_t)]
+            job = k.CreateJobObjectW(None, None)
+            info = EXT(); info.Basic.LimitFlags = 0x2000          # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if not job or not k.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+                engine.log("ai: job object not made"); return
+            _JOB = job
+        if not k.AssignProcessToJobObject(_JOB, wintypes.HANDLE(int(proc._handle))):
+            engine.log("ai: could not tie the AI to the program (%s)" % k.GetLastError())
+    except Exception as e:
+        engine.log("ai: tie failed: %s" % e)
+
+
 class Server:
     """llama-server on 127.0.0.1, started on first use, stopped when the program closes."""
 
@@ -293,6 +336,7 @@ class Server:
                                       "--host", "127.0.0.1", "--port", str(self.port)],
                                      stdout=logf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                      creationflags=flags, cwd=os.path.dirname(exe))
+        _tie_to_us(self.proc)
         engine.log("ai server started, port %d, %d/%d threads" % (self.port, n, nb))
         t0 = time.time()
         while time.time() - t0 < 300:

@@ -193,9 +193,16 @@ jobs:
           python -c "import json; r=json.load(open(r'C:\st\t8\report.json',encoding='utf-8')); print('PICTURES:', [(f['name'], f.get('picture')) for f in r['files']])"
       - name: test 13a - AI helper with the AI not downloaded - the button offers the one-time download, typing still works
         run: |
+          # the published release's one-time download now brings the AI too: take it away, so this test sees no AI and test 14 downloads it again
+          Get-Process llama-server -ErrorAction SilentlyContinue | Format-Table Id,ProcessName
+          if (Get-Process llama-server -ErrorAction SilentlyContinue) { "llama-server LEFT RUNNING by an earlier test"; exit 1 }
+          $aside = @()
+          foreach ($m in @("$env:LOCALAPPDATA\Programs\Hafutza Typing\models\ai\Qwen3.5-4B-Q4_K_M.gguf", "$env:LOCALAPPDATA\HafutzaTyping\models\ai\Qwen3.5-4B-Q4_K_M.gguf")) {
+            if (Test-Path $m) { Move-Item $m "$m.aside"; $aside += $m; "set aside: $m" } }
           $p = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Hafutza Typing\HafutzaTyping.exe" -ArgumentList '--ai-test', "$pwd\tests\clip30.mp3", '--ai-expect-missing', '--spoken', 'yi', '--targets', 'yi', '--out', 'C:\st\t13a', '--ai-timeout', '1200' -PassThru
           if (-not $p.WaitForExit(1500000)) { taskkill /PID $p.Id /T /F; "AI TEST (missing) HUNG"; exit 1 }
           Get-Content C:\st\t13a\report.json
+          foreach ($m in $aside) { Remove-Item "$m.aside" }
           if ($p.ExitCode -ne 0) { "AI TEST (missing model) FAILED"; exit 1 }
       - name: test 14 - one download - the program's own one-time download brings the AI too (2.7 GB), then types a clip
         run: |
